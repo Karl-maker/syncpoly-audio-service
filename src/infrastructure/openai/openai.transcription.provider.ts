@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { randomUUID } from "crypto";
-import * as streamToBuffer from "stream-to-array";
+import streamToBuffer from "stream-to-array";
 import { ITranscriptionProvider, TranscriptionOptions } from "../../domain/interfaces/itranscription.provider";
 import { Speaker, Transcript, TranscriptSegment } from "../../domain/entities/transcript";
 import { AudioSourceProvidersType } from "../../domain/enums/audio.source.provider";
