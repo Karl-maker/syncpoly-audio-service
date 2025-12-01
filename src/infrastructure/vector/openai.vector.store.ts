@@ -67,7 +67,9 @@ export class OpenAIVectorStore implements IVectorStore {
   async upsertMany(records: VectorRecord[]): Promise<void> {
     if (records.length === 0) return;
 
+    console.log(`[OpenAIVectorStore] Upserting ${records.length} records`);
     const vectorStoreId = await this.getOrCreateVectorStore();
+    console.log(`[OpenAIVectorStore] Using vector store ID: ${vectorStoreId}`);
 
     // Create files for each record
     const filePromises = records.map(async (record) => {
@@ -103,15 +105,18 @@ export class OpenAIVectorStore implements IVectorStore {
     });
 
     const fileIds = await Promise.all(filePromises);
+    console.log(`[OpenAIVectorStore] Created ${fileIds.length} files`);
 
     // Add files to vector store using file batches for efficiency
     // OpenAI supports adding multiple files at once via file batches
     await this.client.vectorStores.fileBatches.create(vectorStoreId, {
       file_ids: fileIds,
     });
+    console.log(`[OpenAIVectorStore] Added files to vector store batch`);
 
     // Wait for files to be processed
     await this.waitForFileProcessing(fileIds);
+    console.log(`[OpenAIVectorStore] Files processed successfully`);
   }
 
   /**
@@ -128,6 +133,7 @@ export class OpenAIVectorStore implements IVectorStore {
     filter?: Record<string, any>
   ): Promise<VectorSearchResult[]> {
     const vectorStoreId = await this.getOrCreateVectorStore();
+    console.log(`[OpenAIVectorStore] Searching with filter:`, filter);
 
     // OpenAI's Vector Store API doesn't support direct embedding search.
     // We need to retrieve all files and do local similarity search.
@@ -136,6 +142,7 @@ export class OpenAIVectorStore implements IVectorStore {
     const vectorStoreFiles = await this.client.vectorStores.files.list(
       vectorStoreId
     );
+    console.log(`[OpenAIVectorStore] Found ${vectorStoreFiles.data.length} files in vector store`);
 
     // Download and parse all files
     const records: VectorRecord[] = [];
@@ -144,25 +151,67 @@ export class OpenAIVectorStore implements IVectorStore {
         const fileContent = await this.client.files.content(file.id);
         const text = await fileContent.text();
         const record = JSON.parse(text) as VectorRecord;
-        
-        // Apply filter if provided
-        if (this.matchesFilter(record.metadata, filter)) {
-          records.push(record);
-        }
+        records.push(record);
       } catch (error) {
+        console.error(`[OpenAIVectorStore] Failed to process file ${file.id}:`, error);
         // Silently skip files that can't be processed
-        // In production, you might want to log this
       }
     }
 
-    // Calculate cosine similarity for each record
-    const scored = records
+    console.log(`[OpenAIVectorStore] Parsed ${records.length} records from files`);
+    
+    // Log sample audioSourceIds for debugging
+    if (records.length > 0) {
+      const uniqueSourceIds = Array.from(new Set(records.map(r => r.metadata.audioSourceId)));
+      console.log(`[OpenAIVectorStore] Found ${uniqueSourceIds.length} unique audioSourceIds`);
+      if (filter?.audioSourceId) {
+        console.log(`[OpenAIVectorStore] Searching for audioSourceId: "${filter.audioSourceId}"`);
+        console.log(`[OpenAIVectorStore] Sample stored audioSourceIds:`, uniqueSourceIds.slice(0, 3));
+        const matches = records.filter(r => r.metadata.audioSourceId === filter.audioSourceId);
+        console.log(`[OpenAIVectorStore] Records matching filter: ${matches.length}`);
+      }
+    }
+
+    // Calculate cosine similarity for ALL records first (better approach)
+    // This ensures we get the most similar results regardless of filter
+    const allScored = records
       .map((record) => ({
         record,
         score: this.cosineSimilarity(queryEmbedding, record.embedding),
       }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, topK);
+      .sort((a, b) => b.score - a.score);
+
+    console.log(`[OpenAIVectorStore] Calculated similarity for ${allScored.length} records`);
+    if (allScored.length > 0) {
+      const topScores = allScored.slice(0, Math.min(5, allScored.length)).map(s => ({
+        score: s.score.toFixed(4),
+        audioSourceId: s.record.metadata.audioSourceId,
+      }));
+      console.log(`[OpenAIVectorStore] Top similarity scores:`, topScores);
+    }
+
+    // If filter is provided, get more candidates first, then filter
+    // This ensures we have enough results after filtering
+    const candidateMultiplier = filter ? 5 : 1; // Get 5x more candidates if filtering
+    const candidateCount = Math.min(allScored.length, topK * candidateMultiplier);
+    const candidates = allScored.slice(0, candidateCount);
+    
+    console.log(`[OpenAIVectorStore] Taking top ${candidateCount} candidates for filtering`);
+
+    // Apply filter to candidates if provided
+    let finalCandidates = candidates;
+    if (filter) {
+      const beforeFilter = finalCandidates.length;
+      finalCandidates = candidates.filter((item) =>
+        this.matchesFilter(item.record.metadata, filter)
+      );
+      console.log(`[OpenAIVectorStore] After filter: ${finalCandidates.length} of ${beforeFilter} candidates match`);
+    }
+
+    // Take topK from filtered results
+    const scored = finalCandidates.slice(0, topK);
+
+    console.log(`[OpenAIVectorStore] Returning ${scored.length} results (requested topK: ${topK})`);
 
     return scored.map((s) => ({
       id: s.record.id,

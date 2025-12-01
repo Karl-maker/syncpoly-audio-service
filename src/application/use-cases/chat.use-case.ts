@@ -23,7 +23,8 @@ export class ChatUseCase {
   }
 
   async *execute(params: ChatUseCaseParams): AsyncGenerator<string, void, unknown> {
-    const { userId, message, audioFileId, topK = 5 } = params;
+    // Default topK to 10 for better results, especially when filtering
+    const { userId, message, audioFileId, topK = 10 } = params;
 
     // Verify audio file belongs to user if specified
     if (audioFileId) {
@@ -35,9 +36,16 @@ export class ChatUseCase {
 
     // Get user's audio files to build filter
     const userAudioFiles = await this.audioFileRepository.findByUserId(userId);
+    
+    // Build audioSourceId format: "bucket/key" (matches what IAudioSource.getId() returns)
     const audioSourceIds = audioFileId
-      ? [userAudioFiles.find((f) => f.id === audioFileId)?.s3Uri].filter(Boolean)
-      : userAudioFiles.map((f) => f.s3Uri).filter(Boolean);
+      ? (() => {
+          const file = userAudioFiles.find((f) => f.id === audioFileId);
+          return file && file.s3Bucket && file.s3Key ? [`${file.s3Bucket}/${file.s3Key}`] : [];
+        })()
+      : userAudioFiles
+          .filter((f) => f.s3Bucket && f.s3Key)
+          .map((f) => `${f.s3Bucket}/${f.s3Key}`);
 
     if (audioSourceIds.length === 0) {
       throw new Error("No audio files found for user");
@@ -48,27 +56,43 @@ export class ChatUseCase {
       { id: "query", text: message },
     ]);
 
-    // Search vector store for relevant context
-    const searchFilter: Record<string, any> = {};
+    // Build search filter with userId (required) and optional audioFileId
+    const searchFilter: Record<string, any> = {
+      userId: userId, // Always filter by userId for security
+    };
+    
     if (audioFileId && audioSourceIds.length > 0) {
       // Filter by specific audio file
+      searchFilter.audioFileId = audioFileId;
       searchFilter.audioSourceId = audioSourceIds[0];
-    } else {
-      // Filter by all user's audio files
-      // Note: Vector store filter might need to support array matching
-      // For now, we'll search without filter and filter results
     }
+
+    console.log(`[Chat] Searching vector store for query: "${message}" with filter:`, searchFilter);
 
     const searchResults = await this.vectorStore.search(
       queryEmbedding.embedding,
       topK,
-      searchFilter.audioSourceId ? searchFilter : undefined
+      searchFilter
     );
 
-    // Filter results by audioSourceId if not already filtered
-    const relevantChunks = audioFileId
-      ? searchResults.filter((r) => r.metadata.audioSourceId === audioSourceIds[0])
-      : searchResults.filter((r) => audioSourceIds.includes(r.metadata.audioSourceId));
+    console.log(`[Chat] Found ${searchResults.length} search results`);
+
+    // Results are already filtered by the vector store, but double-check for security
+    const relevantChunks = searchResults.filter((r) => {
+      // Ensure userId matches (security check)
+      if (r.metadata.userId !== userId) return false;
+      
+      if (audioFileId) {
+        // For specific audio file, ensure it matches
+        return r.metadata.audioFileId === audioFileId || 
+               r.metadata.audioSourceId === audioSourceIds[0];
+      } else {
+        // For all user audio, ensure audioSourceId is in user's files
+        return audioSourceIds.includes(r.metadata.audioSourceId);
+      }
+    });
+
+    console.log(`[Chat] Filtered to ${relevantChunks.length} relevant chunks`);
 
     // Build context from retrieved chunks
     const context = relevantChunks

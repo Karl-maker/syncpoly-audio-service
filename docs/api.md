@@ -23,7 +23,7 @@ The JWT token must contain the following payload:
 
 ### 1. Upload Audio File
 
-Upload an audio file to the service. The file will be stored in S3 (if configured) and metadata saved to the database.
+Upload an audio file to the service. The file will be stored in S3 (if configured) and metadata saved to the database. Uploads are processed asynchronously and progress can be tracked via the upload job ID.
 
 **Endpoint:** `POST /api/audio/upload`
 
@@ -35,17 +35,22 @@ Upload an audio file to the service. The file will be stored in S3 (if configure
 - `file` (file, required): Audio file to upload (max 100MB)
   - Accepted MIME types: `audio/*`
 
-**Response:** `201 Created`
+**Response:** `202 Accepted`
 
 ```json
 {
-  "id": "audio-file-id",
-  "filename": "audio.wav",
-  "s3Uri": "s3://bucket/users/user123/uuid-audio.wav",
-  "fileSize": 1024000,
-  "uploadedAt": "2024-01-15T10:30:00.000Z"
+  "jobId": "upload-job-id",
+  "status": "pending",
+  "message": "Upload started",
+  "audioFileId": null
 }
 ```
+
+**Response Fields:**
+- `jobId` (string): Upload job ID to poll for progress
+- `status` (string): Current status (`pending`, `uploading`, `completed`, `failed`)
+- `message` (string): Status message
+- `audioFileId` (string, optional): Audio file ID (only present when `status` is `completed`)
 
 **Error Responses:**
 - `400 Bad Request`: No file uploaded or invalid file type
@@ -58,6 +63,63 @@ Upload an audio file to the service. The file will be stored in S3 (if configure
 curl -X POST http://localhost:3000/api/audio/upload \
   -H "Authorization: Bearer <jwt-token>" \
   -F "file=@audio.wav"
+```
+
+---
+
+### 1.1. Get Upload Progress
+
+Poll the upload progress for a specific upload job.
+
+**Endpoint:** `GET /api/audio/upload/:jobId/progress`
+
+**Authentication:** Required
+
+**URL Parameters:**
+- `jobId` (string, required): Upload job ID returned from upload endpoint
+
+**Response:** `200 OK`
+
+```json
+{
+  "jobId": "upload-job-id",
+  "status": "uploading",
+  "progress": 45,
+  "audioFileId": null,
+  "filename": "audio.wav",
+  "s3Bucket": "my-bucket",
+  "s3Key": "users/user123/uuid-audio.wav",
+  "error": null,
+  "startedAt": "2024-01-15T10:30:00.000Z",
+  "completedAt": null,
+  "createdAt": "2024-01-15T10:30:00.000Z"
+}
+```
+
+**Response Fields:**
+- `jobId` (string): Upload job ID
+- `status` (string): Current status (`pending`, `uploading`, `completed`, `failed`)
+- `progress` (number): Upload progress percentage (0-100)
+- `audioFileId` (string, optional): Audio file ID (only present when `status` is `completed`)
+- `filename` (string): Original filename
+- `s3Bucket` (string, optional): S3 bucket name
+- `s3Key` (string, optional): S3 object key
+- `error` (string, optional): Error message (only present when `status` is `failed`)
+- `startedAt` (string, optional): When upload started
+- `completedAt` (string, optional): When upload completed
+- `createdAt` (string): When job was created
+
+**Error Responses:**
+- `401 Unauthorized`: Missing or invalid JWT token
+- `403 Forbidden`: Upload job does not belong to user
+- `404 Not Found`: Upload job not found
+- `500 Internal Server Error`: Failed to get upload progress
+
+**Example:**
+
+```bash
+curl http://localhost:3000/api/audio/upload/upload-job-id/progress \
+  -H "Authorization: Bearer <jwt-token>"
 ```
 
 ---
@@ -128,6 +190,86 @@ curl -X POST http://localhost:3000/api/audio/process \
     "vectorStoreType": "openai",
     "options": {}
   }'
+```
+
+---
+
+### 2.1. Get Transcript
+
+Retrieve the transcript for a processed audio file.
+
+**Endpoint:** `GET /api/audio/:audioFileId/transcript`
+
+**Authentication:** Required
+
+**URL Parameters:**
+- `audioFileId` (string, required): ID of the audio file
+
+**Response:** `200 OK`
+
+```json
+{
+  "id": "transcript-id",
+  "audioSourceId": "bucket/key",
+  "audioSourceProvider": "s3",
+  "language": "en",
+  "speakers": [
+    {
+      "id": "speaker_1",
+      "displayName": "Speaker 1"
+    },
+    {
+      "id": "speaker_2",
+      "displayName": "Speaker 2"
+    }
+  ],
+  "segments": [
+    {
+      "id": "seg_0",
+      "speakerId": "speaker_1",
+      "text": "Hello, how are you?",
+      "startTimeSec": 0.0,
+      "endTimeSec": 2.5
+    },
+    {
+      "id": "seg_1",
+      "speakerId": "speaker_2",
+      "text": "I'm doing well, thank you!",
+      "startTimeSec": 2.5,
+      "endTimeSec": 5.0
+    }
+  ],
+  "createdAt": "2024-01-15T10:30:00.000Z"
+}
+```
+
+**Response Fields:**
+- `id` (string): Transcript ID
+- `audioSourceId` (string): Audio source identifier (e.g., "bucket/key")
+- `audioSourceProvider` (string): Type of audio source (e.g., "s3")
+- `language` (string): Detected language code
+- `speakers` (array): List of speakers in the transcript
+  - `id` (string): Speaker identifier
+  - `displayName` (string): Display name for the speaker
+- `segments` (array): Transcript segments with timestamps
+  - `id` (string): Segment identifier
+  - `speakerId` (string): Speaker who said this segment
+  - `text` (string): Transcribed text
+  - `startTimeSec` (number): Start time in seconds
+  - `endTimeSec` (number): End time in seconds
+- `createdAt` (string): When transcript was created
+
+**Error Responses:**
+- `401 Unauthorized`: Missing or invalid JWT token
+- `403 Forbidden`: Audio file does not belong to user
+- `404 Not Found`: Audio file or transcript not found
+- `500 Internal Server Error`: Failed to get transcript
+
+**Example:**
+
+```bash
+curl http://localhost:3000/api/audio/audio-file-id/transcript \
+  -H "Authorization: Bearer <jwt-token>"
 ```
 
 ---

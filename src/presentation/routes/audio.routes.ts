@@ -41,6 +41,12 @@ export function createAudioRoutes(
   // Get memory usage
   router.get("/memory/:userId", (req, res) => audioController.getMemoryUsage(req as any, res));
 
+  // Get upload progress
+  router.get("/upload/:jobId/progress", (req, res) => audioController.getUploadProgress(req as any, res));
+
+  // Get transcript for an audio file
+  router.get("/:audioFileId/transcript", (req, res) => audioController.getTranscript(req as any, res));
+
   // Chat endpoint
   router.post("/chat", (req, res) => chatController.chat(req as any, res));
 

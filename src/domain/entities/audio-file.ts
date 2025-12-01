@@ -5,7 +5,8 @@ export interface AudioFile {
   userId: string;
   filename: string;
   originalFilename: string;
-  s3Uri?: string; // s3://bucket/key format
+  s3Bucket?: string;
+  s3Key?: string;
   audioSourceProvider: AudioSourceProvidersType;
   fileSize: number; // in bytes
   mimeType: string;

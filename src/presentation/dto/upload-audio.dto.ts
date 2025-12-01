@@ -3,10 +3,9 @@ export interface UploadAudioRequest {
 }
 
 export interface UploadAudioResponse {
-  id: string;
-  filename: string;
-  s3Uri?: string;
-  fileSize: number;
-  uploadedAt: Date;
+  jobId: string;
+  status: "pending" | "uploading" | "completed" | "failed";
+  message: string;
+  audioFileId?: string;
 }
 

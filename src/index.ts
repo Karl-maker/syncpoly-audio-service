@@ -3,10 +3,14 @@ import { config } from "./infrastructure/config/app.config";
 import { connectToMongoDB, getDb } from "./infrastructure/database/mongodb.connection";
 import { AudioFileRepository } from "./infrastructure/database/repositories/audio-file.repository";
 import { ProcessingJobRepository } from "./infrastructure/database/repositories/processing-job.repository";
+import { UploadJobRepository } from "./infrastructure/database/repositories/upload-job.repository";
+import { TranscriptRepository } from "./infrastructure/database/repositories/transcript.repository";
 import { S3AudioStorage } from "./infrastructure/aws/s3.audio.storage";
 import { UploadAudioUseCase } from "./application/use-cases/upload-audio.use-case";
 import { ProcessAudioUseCase } from "./application/use-cases/process-audio.use-case";
 import { GetMemoryUsageUseCase } from "./application/use-cases/get-memory-usage.use-case";
+import { GetUploadProgressUseCase } from "./application/use-cases/get-upload-progress.use-case";
+import { GetTranscriptUseCase } from "./application/use-cases/get-transcript.use-case";
 import { AudioController } from "./presentation/controllers/audio.controller";
 import { ChatController } from "./presentation/controllers/chat.controller";
 import { createAudioRoutes } from "./presentation/routes/audio.routes";
@@ -18,7 +22,7 @@ import { StoreInVectorDbStep } from "./application/steps/store.in.vector.db.step
 import { OpenAITranscriptionProvider } from "./infrastructure/openai/openai.transcription.provider";
 import { OpenAIEmbeddingProvider } from "./infrastructure/openai/openai.embedding.provider";
 import { InMemoryVectorStore } from "./infrastructure/vector/in.memory.vector.store";
-import { OpenAIVectorStore } from "./infrastructure/vector/openai.vector.store";
+import { MongoDBVectorStore } from "./infrastructure/vector/mongodb.vector.store";
 
 async function main() {
   try {
@@ -29,6 +33,8 @@ async function main() {
     // Initialize repositories
     const audioFileRepository = new AudioFileRepository(db);
     const processingJobRepository = new ProcessingJobRepository(db);
+    const uploadJobRepository = new UploadJobRepository(db);
+    const transcriptRepository = new TranscriptRepository(db);
 
     // Initialize infrastructure
     const transcriptionProvider = new OpenAITranscriptionProvider(config.openaiApiKey);
@@ -36,23 +42,23 @@ async function main() {
 
     // Initialize vector stores
     const inMemoryVectorStore = new InMemoryVectorStore();
-    const openaiVectorStore = new OpenAIVectorStore(config.openaiApiKey);
-
-    // Use OpenAI vector store for chat if available, otherwise in-memory
-    const chatVectorStore = openaiVectorStore || inMemoryVectorStore;
-
-    // Initialize processing pipeline
-    const processingPipeline = new AudioProcessingPipeline([
-      new TranscriptionStep(transcriptionProvider),
-      new ChunkAndEmbedStep(embeddingProvider),
-      new StoreInVectorDbStep(inMemoryVectorStore), // Default to in-memory
-    ]);
+    // Use MongoDB for vector storage (supports userId/audioFileId organization)
+    const mongodbVectorStore = new MongoDBVectorStore(db, "vectorEmbeddings");
+    
+    // For processing and chat, use MongoDB vector store
+    const chatVectorStore = mongodbVectorStore;
 
     // Initialize S3 storage if configured
+    // Ensure region is explicitly set from config
+    const s3Region = config.aws.region;
+    if (!s3Region || typeof s3Region !== "string") {
+      console.warn("Warning: AWS_REGION not set, defaulting to us-east-1");
+    }
+    
     const s3Storage =
       config.aws.accessKeyId && config.aws.secretAccessKey
         ? new S3AudioStorage({
-            region: config.aws.region,
+            region: s3Region || "us-east-1",
             credentials: {
               accessKeyId: config.aws.accessKeyId,
               secretAccessKey: config.aws.secretAccessKey,
@@ -65,16 +71,26 @@ async function main() {
     // Initialize use cases
     const uploadAudioUseCase = new UploadAudioUseCase(
       audioFileRepository,
+      uploadJobRepository,
       s3Storage
     );
-    const processAudioUseCase = new ProcessAudioUseCase(
-      audioFileRepository,
-      processingJobRepository,
-      processingPipeline
-    );
+      const processAudioUseCase = new ProcessAudioUseCase(
+        audioFileRepository,
+        processingJobRepository,
+        transcriptRepository,
+        transcriptionProvider,
+        embeddingProvider,
+        inMemoryVectorStore,
+        mongodbVectorStore
+      );
     const getMemoryUsageUseCase = new GetMemoryUsageUseCase(
       audioFileRepository,
       processingJobRepository
+    );
+    const getUploadProgressUseCase = new GetUploadProgressUseCase(uploadJobRepository);
+    const getTranscriptUseCase = new GetTranscriptUseCase(
+      transcriptRepository,
+      audioFileRepository
     );
 
     // Initialize chat use case
@@ -89,7 +105,9 @@ async function main() {
     const audioController = new AudioController(
       uploadAudioUseCase,
       processAudioUseCase,
-      getMemoryUsageUseCase
+      getMemoryUsageUseCase,
+      getUploadProgressUseCase,
+      getTranscriptUseCase
     );
     const chatController = new ChatController(chatUseCase);
 

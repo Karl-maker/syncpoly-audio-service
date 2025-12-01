@@ -31,7 +31,7 @@ export class ChatController {
           userId: req.user.userId,
           message,
           audioFileId,
-          topK: topK || 5,
+          topK: topK || 10, // Default to 10 for better results
         })) {
           // Send chunk as SSE
           res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);

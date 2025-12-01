@@ -3,36 +3,11 @@ import { Readable } from "stream";
 import { IAudioSource } from "../../domain/interfaces/iaudio.source";
 
 /**
- * Parses an S3 URI (s3://bucket/key) into bucket and key components.
- */
-function parseS3Uri(uri: string): { bucket: string; key: string } {
-  if (!uri.startsWith("s3://")) {
-    throw new Error(`Invalid S3 URI: ${uri}. Must start with "s3://"`);
-  }
-
-  const withoutProtocol = uri.slice(5); // Remove "s3://"
-  const firstSlash = withoutProtocol.indexOf("/");
-
-  if (firstSlash === -1) {
-    throw new Error(`Invalid S3 URI: ${uri}. Must include a key after bucket name`);
-  }
-
-  const bucket = withoutProtocol.slice(0, firstSlash);
-  const key = withoutProtocol.slice(firstSlash + 1);
-
-  if (!bucket || !key) {
-    throw new Error(`Invalid S3 URI: ${uri}. Bucket and key must be non-empty`);
-  }
-
-  return { bucket, key };
-}
-
-/**
  * S3AudioSource implements IAudioSource for reading audio files from AWS S3.
  * 
  * Example usage:
  * ```typescript
- * const source = new S3AudioSource("s3://my-bucket/audio/file.wav", {
+ * const source = new S3AudioSource("my-bucket", "audio/file.wav", {
  *   region: "us-east-1",
  *   credentials: { accessKeyId: "...", secretAccessKey: "..." }
  * });
@@ -40,13 +15,13 @@ function parseS3Uri(uri: string): { bucket: string; key: string } {
  * ```
  */
 export class S3AudioSource implements IAudioSource {
-  private s3Uri: string;
   private s3Client: S3Client;
   private bucket: string;
   private key: string;
 
   constructor(
-    s3Uri: string,
+    bucket: string,
+    key: string,
     s3Config?: {
       region?: string;
       credentials?: {
@@ -58,13 +33,19 @@ export class S3AudioSource implements IAudioSource {
       forcePathStyle?: boolean; // Use path-style addressing
     }
   ) {
-    this.s3Uri = s3Uri;
-    const parsed = parseS3Uri(s3Uri);
-    this.bucket = parsed.bucket;
-    this.key = parsed.key;
+    this.bucket = bucket;
+    this.key = key;
+
+    // Ensure region is always a string, never undefined or function
+    const region = s3Config?.region || "us-east-1";
+    if (typeof region !== "string") {
+      throw new Error(`Invalid region: must be a string, got ${typeof region}`);
+    }
+
+    console.log(`[S3AudioSource] Initializing with region: ${region} for bucket: ${bucket}`);
 
     this.s3Client = new S3Client({
-      region: s3Config?.region || "us-east-1",
+      region: region,
       credentials: s3Config?.credentials,
       endpoint: s3Config?.endpoint,
       forcePathStyle: s3Config?.forcePathStyle || false,
@@ -72,7 +53,7 @@ export class S3AudioSource implements IAudioSource {
   }
 
   getId(): string {
-    return this.s3Uri;
+    return `${this.bucket}/${this.key}`;
   }
 
   getReadableStream(): Readable {
@@ -82,7 +63,10 @@ export class S3AudioSource implements IAudioSource {
     });
 
     const s3Client = this.s3Client;
-    const s3Uri = this.s3Uri;
+    const bucket = this.bucket;
+    const key = this.key;
+
+    console.log(`[S3AudioSource] Creating stream for ${bucket}/${key}`);
 
     // Create a readable stream that will fetch the S3 object asynchronously
     // when it's first read. This allows us to return a stream synchronously
@@ -96,14 +80,20 @@ export class S3AudioSource implements IAudioSource {
         }
         s3RequestStarted = true;
 
+        console.log(`[S3AudioSource] Starting S3 request for ${bucket}/${key}`);
+
         // Start the async S3 request
         s3Client
           .send(command)
           .then((response) => {
             if (!response.Body) {
-              this.emit("error", new Error(`No body returned from S3 for ${s3Uri}`));
+              const error = new Error(`No body returned from S3 for ${bucket}/${key}`);
+              console.error(`[S3AudioSource] Error:`, error.message);
+              this.emit("error", error);
               return;
             }
+
+            console.log(`[S3AudioSource] S3 response received, streaming data...`);
 
             // Convert the response body to a stream
             const bodyStream = response.Body as Readable;
@@ -117,10 +107,12 @@ export class S3AudioSource implements IAudioSource {
             });
 
             bodyStream.on("end", () => {
+              console.log(`[S3AudioSource] Stream ended for ${bucket}/${key}`);
               this.push(null); // Signal end of stream
             });
 
             bodyStream.on("error", (error) => {
+              console.error(`[S3AudioSource] Stream error:`, error);
               this.emit("error", error);
             });
 
@@ -130,6 +122,7 @@ export class S3AudioSource implements IAudioSource {
             }
           })
           .catch((error) => {
+            console.error(`[S3AudioSource] S3 request failed:`, error);
             this.emit("error", error);
           });
       },

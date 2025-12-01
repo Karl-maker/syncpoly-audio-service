@@ -1,6 +1,6 @@
 export interface ProcessAudioRequest {
   audioFileId: string;
-  vectorStoreType?: "openai" | "in-memory";
+  vectorStoreType?: "mongodb" | "openai" | "in-memory"; // "mongodb" is the default and recommended option
   skipTranscription?: boolean;
   skipEmbeddings?: boolean;
   skipVectorStore?: boolean;

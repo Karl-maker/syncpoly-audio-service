@@ -2,8 +2,10 @@ import { Transcript } from "../entities/transcript";
 import { AudioSourceProvidersType } from "../enums/audio.source.provider";
 
 export interface TranscriptionOptions {
-    language?: string;
-    diarizeSpeakers?: boolean;
+  language?: string;
+  diarizeSpeakers?: boolean;
+  filename?: string;
+  mimeType?: string;
 }
   
 export interface ITranscriptionProvider {
