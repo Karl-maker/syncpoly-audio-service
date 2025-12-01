@@ -16,6 +16,7 @@ import { TranscriptRepository } from "../../infrastructure/database/repositories
 export interface ProcessAudioUseCaseParams {
   audioFileId: string;
   userId: string;
+  idempotencyKey?: string; // Optional: idempotency key to prevent duplicate processing
   vectorStoreType?: "mongodb" | "openai" | "in-memory"; // "mongodb" is the default and recommended option
   skipTranscription?: boolean;
   skipEmbeddings?: boolean;
@@ -47,6 +48,7 @@ export class ProcessAudioUseCase {
     const {
       audioFileId,
       userId,
+      idempotencyKey,
       vectorStoreType = "mongodb", // Default to MongoDB vector store
       skipTranscription = false,
       skipEmbeddings = false,
@@ -54,6 +56,15 @@ export class ProcessAudioUseCase {
       options = {},
       s3Config,
     } = params;
+
+    // Check for existing job with same idempotency key
+    if (idempotencyKey) {
+      const existingJob = await this.processingJobRepository.findByIdempotencyKey(idempotencyKey, userId);
+      if (existingJob) {
+        console.log(`[ProcessAudio] Found existing job ${existingJob.id} with idempotency key ${idempotencyKey}, returning existing job`);
+        return existingJob;
+      }
+    }
 
     // Get audio file
     const audioFile = await this.audioFileRepository.findById(audioFileId);
@@ -74,10 +85,14 @@ export class ProcessAudioUseCase {
     };
     
     console.log(`[ProcessAudio] Creating job with options:`, JSON.stringify(jobOptions));
+    if (idempotencyKey) {
+      console.log(`[ProcessAudio] Using idempotency key: ${idempotencyKey}`);
+    }
     
     const job = await this.processingJobRepository.create({
       audioFileId,
       userId,
+      idempotencyKey,
       status: "pending",
       vectorStoreType,
       options: jobOptions,

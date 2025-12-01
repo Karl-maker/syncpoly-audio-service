@@ -149,7 +149,7 @@ Start processing an uploaded audio file. This will transcribe the audio, generat
 
 **Request Fields:**
 - `audioFileId` (string, required): ID of the audio file to process
-- `vectorStoreType` (string, optional): Type of vector store to use (`"openai"` or `"in-memory"`). Default: `"in-memory"`
+- `vectorStoreType` (string, optional): Type of vector store to use (`"mongodb"`, `"openai"`, or `"in-memory"`). Default: `"mongodb"`
 - `skipTranscription` (boolean, optional): Skip transcription step. Default: `false`
 - `skipEmbeddings` (boolean, optional): Skip embedding generation. Default: `false`
 - `skipVectorStore` (boolean, optional): Skip storing in vector store. Default: `false`
@@ -420,6 +420,325 @@ eventSource.onmessage = (event) => {
 
 ---
 
+### 5. Generate Breakdown
+
+Automatically generate a structured breakdown of an audio file's transcript. The breakdown includes an introduction, bullet points, main takeaways, action items (tasks), and questions. This endpoint uses AI to analyze the transcript and extract structured information.
+
+**Endpoint:** `POST /api/audio/:audioFileId/breakdown/generate`
+
+**Authentication:** Required
+
+**URL Parameters:**
+- `audioFileId` (string, required): ID of the audio file to generate breakdown for
+
+**Response:** `200 OK`
+
+```json
+{
+  "id": "breakdown-id",
+  "audioFileId": "audio-file-id",
+  "introduction": "This audio discusses the quarterly business review meeting...",
+  "bulletPoints": [
+    "Q4 revenue increased by 15%",
+    "New product launch scheduled for Q2",
+    "Team expansion planned for engineering department"
+  ],
+  "mainTakeaways": [
+    "Strong financial performance in Q4",
+    "Focus on product innovation",
+    "Investment in team growth"
+  ],
+  "actionItems": [
+    {
+      "id": "task-id-1",
+      "description": "Prepare Q2 product launch plan",
+      "dueDate": "2024-04-01T00:00:00.000Z",
+      "priority": "high",
+      "status": "pending"
+    },
+    {
+      "id": "task-id-2",
+      "description": "Hire 3 new engineers",
+      "dueDate": null,
+      "priority": "medium",
+      "status": "pending"
+    }
+  ],
+  "questions": [
+    {
+      "id": "question-id-1",
+      "type": "true-false",
+      "question": "Q4 revenue increased by 15%",
+      "options": [
+        {
+          "id": "opt-1",
+          "text": "True",
+          "isCorrect": true
+        },
+        {
+          "id": "opt-2",
+          "text": "False",
+          "isCorrect": false
+        }
+      ],
+      "correctAnswer": "true",
+      "explanation": "The transcript confirms a 15% revenue increase in Q4"
+    },
+    {
+      "id": "question-id-2",
+      "type": "multiple-choice",
+      "question": "When is the new product launch scheduled?",
+      "options": [
+        {
+          "id": "opt-3",
+          "text": "Q1",
+          "isCorrect": false
+        },
+        {
+          "id": "opt-4",
+          "text": "Q2",
+          "isCorrect": true
+        },
+        {
+          "id": "opt-5",
+          "text": "Q3",
+          "isCorrect": false
+        }
+      ],
+      "correctAnswer": "Q2",
+      "explanation": "The transcript mentions Q2 for the product launch"
+    }
+  ],
+  "createdAt": "2024-01-15T10:30:00.000Z",
+  "updatedAt": "2024-01-15T10:30:00.000Z"
+}
+```
+
+**Response Fields:**
+- `id` (string): Breakdown ID
+- `audioFileId` (string): Associated audio file ID
+- `introduction` (string): Brief overview of the audio content
+- `bulletPoints` (array): Key points mentioned in the audio
+- `mainTakeaways` (array): Most important insights or conclusions
+- `actionItems` (array): Tasks extracted from the audio
+  - `id` (string): Task ID
+  - `description` (string): Task description
+  - `dueDate` (string, optional): Due date in ISO format
+  - `priority` (string, optional): Priority level (`"low"`, `"medium"`, `"high"`)
+  - `status` (string): Task status (`"pending"`, `"in-progress"`, `"completed"`, `"deferred"`)
+- `questions` (array): Questions generated from the audio
+  - `id` (string): Question ID
+  - `type` (string): Question type (`"true-false"`, `"multiple-choice"`, `"short-answer"`)
+  - `question` (string): Question text
+  - `options` (array, optional): Answer options (for true-false and multiple-choice)
+    - `id` (string): Option ID
+    - `text` (string): Option text
+    - `isCorrect` (boolean, optional): Whether this option is correct
+  - `correctAnswer` (string, optional): Correct answer or explanation
+  - `explanation` (string, optional): Explanation of the answer
+- `createdAt` (string): When breakdown was created
+- `updatedAt` (string): When breakdown was last updated
+
+**Error Responses:**
+- `400 Bad Request`: Missing audioFileId
+- `401 Unauthorized`: Missing or invalid JWT token
+- `403 Forbidden`: Audio file does not belong to user
+- `404 Not Found`: Audio file not found or transcript not found (audio must be processed first)
+- `500 Internal Server Error`: Failed to generate breakdown
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:3000/api/audio/audio-file-id/breakdown/generate \
+  -H "Authorization: Bearer <jwt-token>"
+```
+
+**Note:** The audio file must be processed (transcribed) before generating a breakdown. If no transcript exists, the endpoint will return a 404 error.
+
+---
+
+### 6. Create Breakdown
+
+Manually create a breakdown for an audio file. This allows you to create custom breakdowns with your own content and link existing tasks and questions.
+
+**Endpoint:** `POST /api/audio/:audioFileId/breakdown`
+
+**Authentication:** Required
+
+**URL Parameters:**
+- `audioFileId` (string, required): ID of the audio file
+
+**Content-Type:** `application/json`
+
+**Request Body:**
+
+```json
+{
+  "introduction": "This audio discusses the quarterly business review meeting...",
+  "bulletPoints": [
+    "Q4 revenue increased by 15%",
+    "New product launch scheduled for Q2"
+  ],
+  "mainTakeaways": [
+    "Strong financial performance in Q4",
+    "Focus on product innovation"
+  ],
+  "actionItemIds": ["task-id-1", "task-id-2"],
+  "questionIds": ["question-id-1", "question-id-2"]
+}
+```
+
+**Request Fields:**
+- `introduction` (string, required): Brief overview of the audio content
+- `bulletPoints` (array, optional): Key points mentioned in the audio
+- `mainTakeaways` (array, optional): Most important insights or conclusions
+- `actionItemIds` (array, optional): IDs of existing tasks to link to this breakdown
+- `questionIds` (array, optional): IDs of existing questions to link to this breakdown
+
+**Response:** `201 Created`
+
+Returns the same structure as the Generate Breakdown endpoint.
+
+**Error Responses:**
+- `400 Bad Request`: Missing required fields (introduction)
+- `401 Unauthorized`: Missing or invalid JWT token
+- `403 Forbidden`: Audio file does not belong to user, or breakdown already exists
+- `404 Not Found`: Audio file not found, or task/question IDs not found
+- `500 Internal Server Error`: Failed to create breakdown
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:3000/api/audio/audio-file-id/breakdown \
+  -H "Authorization: Bearer <jwt-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "introduction": "This audio discusses...",
+    "bulletPoints": ["Point 1", "Point 2"],
+    "mainTakeaways": ["Takeaway 1"],
+    "actionItemIds": ["task-id-1"],
+    "questionIds": ["question-id-1"]
+  }'
+```
+
+---
+
+### 7. Get Breakdown
+
+Retrieve a breakdown by its ID.
+
+**Endpoint:** `GET /api/audio/breakdown/:breakdownId`
+
+**Authentication:** Required
+
+**URL Parameters:**
+- `breakdownId` (string, required): Breakdown ID
+
+**Response:** `200 OK`
+
+Returns the same structure as the Generate Breakdown endpoint.
+
+**Error Responses:**
+- `401 Unauthorized`: Missing or invalid JWT token
+- `403 Forbidden`: Breakdown does not belong to user
+- `404 Not Found`: Breakdown not found
+- `500 Internal Server Error`: Failed to get breakdown
+
+**Example:**
+
+```bash
+curl http://localhost:3000/api/audio/breakdown/breakdown-id \
+  -H "Authorization: Bearer <jwt-token>"
+```
+
+---
+
+### 8. Update Breakdown
+
+Update an existing breakdown. You can update any field, and only the provided fields will be updated (partial update).
+
+**Endpoint:** `PUT /api/audio/breakdown/:breakdownId`
+
+**Authentication:** Required
+
+**URL Parameters:**
+- `breakdownId` (string, required): Breakdown ID
+
+**Content-Type:** `application/json`
+
+**Request Body:**
+
+```json
+{
+  "introduction": "Updated introduction text",
+  "bulletPoints": ["Updated point 1", "Updated point 2"],
+  "mainTakeaways": ["Updated takeaway"],
+  "actionItemIds": ["new-task-id-1"],
+  "questionIds": ["new-question-id-1"]
+}
+```
+
+**Request Fields:**
+- `introduction` (string, optional): Updated introduction
+- `bulletPoints` (array, optional): Updated bullet points
+- `mainTakeaways` (array, optional): Updated main takeaways
+- `actionItemIds` (array, optional): Updated list of task IDs to link
+- `questionIds` (array, optional): Updated list of question IDs to link
+
+**Response:** `200 OK`
+
+Returns the updated breakdown with the same structure as the Generate Breakdown endpoint.
+
+**Error Responses:**
+- `400 Bad Request`: Invalid breakdownId
+- `401 Unauthorized`: Missing or invalid JWT token
+- `403 Forbidden`: Breakdown does not belong to user, or task/question IDs do not belong to user
+- `404 Not Found`: Breakdown not found, or task/question IDs not found
+- `500 Internal Server Error`: Failed to update breakdown
+
+**Example:**
+
+```bash
+curl -X PUT http://localhost:3000/api/audio/breakdown/breakdown-id \
+  -H "Authorization: Bearer <jwt-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "introduction": "Updated introduction",
+    "bulletPoints": ["New point 1", "New point 2"]
+  }'
+```
+
+---
+
+### 9. Delete Breakdown
+
+Delete a breakdown by its ID.
+
+**Endpoint:** `DELETE /api/audio/breakdown/:breakdownId`
+
+**Authentication:** Required
+
+**URL Parameters:**
+- `breakdownId` (string, required): Breakdown ID
+
+**Response:** `204 No Content`
+
+**Error Responses:**
+- `400 Bad Request`: Invalid breakdownId
+- `401 Unauthorized`: Missing or invalid JWT token
+- `403 Forbidden`: Breakdown does not belong to user
+- `404 Not Found`: Breakdown not found
+- `500 Internal Server Error`: Failed to delete breakdown
+
+**Example:**
+
+```bash
+curl -X DELETE http://localhost:3000/api/audio/breakdown/breakdown-id \
+  -H "Authorization: Bearer <jwt-token>"
+```
+
+---
+
 ## Health Check
 
 **Endpoint:** `GET /health`
@@ -468,7 +787,10 @@ All error responses follow this format:
 
 - All timestamps are in ISO 8601 format (UTC)
 - File size limits: Maximum 100MB per audio file
-- Vector store: Uses OpenAI Vector Store API if available, otherwise falls back to in-memory storage
+- Vector store: Default is MongoDB vector store (`"mongodb"`). Also supports OpenAI Vector Store API (`"openai"`) and in-memory storage (`"in-memory"`)
 - Processing jobs run asynchronously; check job status separately if needed
 - Chat responses are streamed in real-time using Server-Sent Events
+- Breakdown generation requires the audio file to be processed (transcribed) first
+- True/False questions will have `isCorrect` properly set for both "True" and "False" options
+- CDN URLs: If `CDN_URL` is configured in environment variables, uploaded audio files will include a `cdnUrl` field for playback
 

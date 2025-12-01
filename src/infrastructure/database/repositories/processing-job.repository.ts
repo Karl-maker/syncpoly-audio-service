@@ -5,6 +5,25 @@ import { MongoDBRepository } from "../mongodb.repository";
 export class ProcessingJobRepository extends MongoDBRepository<ProcessingJob> {
   constructor(db: Db) {
     super(db, "processingJobs");
+    // Create indexes for efficient queries
+    this.ensureIndexes();
+  }
+
+  private async ensureIndexes(): Promise<void> {
+    try {
+      // Index on userId for fast filtering
+      await this.collection.createIndex({ userId: 1 });
+      // Index on audioFileId for fast filtering
+      await this.collection.createIndex({ audioFileId: 1 });
+      // Compound unique index on idempotencyKey and userId to prevent duplicates
+      await this.collection.createIndex(
+        { idempotencyKey: 1, userId: 1 },
+        { unique: true, sparse: true } // sparse: only index documents that have idempotencyKey
+      );
+    } catch (error) {
+      // Indexes might already exist, ignore error
+      console.log("[ProcessingJobRepository] Index creation skipped (may already exist)");
+    }
   }
 
   async findByUserId(userId: string): Promise<ProcessingJob[]> {
@@ -21,6 +40,17 @@ export class ProcessingJobRepository extends MongoDBRepository<ProcessingJob> {
       .sort({ createdAt: -1 })
       .toArray();
     return docs.map((doc: Record<string, any>) => this.toDomain(doc));
+  }
+
+  /**
+   * Find a processing job by idempotency key
+   */
+  async findByIdempotencyKey(idempotencyKey: string, userId: string): Promise<ProcessingJob | null> {
+    const doc = await this.collection.findOne({ 
+      idempotencyKey,
+      userId // Ensure it belongs to the same user
+    });
+    return doc ? this.toDomain(doc as Record<string, any>) : null;
   }
 }
 

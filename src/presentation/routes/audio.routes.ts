@@ -47,8 +47,11 @@ export function createAudioRoutes(
   // Get transcript for an audio file
   router.get("/:audioFileId/transcript", (req, res) => audioController.getTranscript(req as any, res));
 
-  // Generate breakdown for an audio file
+  // Generate breakdown for an audio file (all chunks or specific orderIndex)
   router.post("/:audioFileId/breakdown/generate", (req, res) => audioController.generateBreakdown(req as any, res));
+
+  // Get all breakdowns for an audio file
+  router.get("/:audioFileId/breakdowns", (req, res) => audioController.getBreakdowns(req as any, res));
 
   // CRUD endpoints for breakdown
   router.post("/:audioFileId/breakdown", (req, res) => audioController.createBreakdown(req as any, res));

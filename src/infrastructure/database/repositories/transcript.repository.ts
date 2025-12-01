@@ -12,6 +12,8 @@ export class TranscriptRepository extends MongoDBRepository<Transcript> {
     return {
       ...rest,
       id: _id.toString(),
+      // Backward compatibility: default orderIndex to 0 if not present
+      orderIndex: rest.orderIndex !== undefined ? rest.orderIndex : 0,
       createdAt: rest.createdAt instanceof Date ? rest.createdAt : new Date(rest.createdAt),
       segments: (rest.segments || []).map((seg: any) => ({
         id: seg.id,
@@ -42,7 +44,18 @@ export class TranscriptRepository extends MongoDBRepository<Transcript> {
   async findByAudioSourceId(audioSourceId: string): Promise<Transcript[]> {
     const docs = await this.collection
       .find({ audioSourceId })
-      .sort({ createdAt: -1 })
+      .sort({ orderIndex: 1, createdAt: 1 }) // Sort by orderIndex first, then createdAt
+      .toArray();
+    return docs.map((doc: Record<string, any>) => this.toDomain(doc));
+  }
+
+  /**
+   * Find all transcripts for an audio file, sorted by orderIndex
+   */
+  async findByAudioFileId(audioFileId: string): Promise<Transcript[]> {
+    const docs = await this.collection
+      .find({ audioFileId })
+      .sort({ orderIndex: 1, createdAt: 1 }) // Sort by orderIndex first, then createdAt
       .toArray();
     return docs.map((doc: Record<string, any>) => this.toDomain(doc));
   }
@@ -52,7 +65,7 @@ export class TranscriptRepository extends MongoDBRepository<Transcript> {
     // For now, we'll search by audioSourceId pattern if it contains userId
     const docs = await this.collection
       .find({ audioSourceId: { $regex: userId } })
-      .sort({ createdAt: -1 })
+      .sort({ orderIndex: 1, createdAt: 1 })
       .toArray();
     return docs.map((doc: Record<string, any>) => this.toDomain(doc));
   }

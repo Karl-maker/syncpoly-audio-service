@@ -17,10 +17,12 @@ export interface TranscriptSegment {
 
 export interface Transcript {
   id: string;
+  audioFileId?: string; // Optional: link to audio file (for backward compatibility)
   audioSourceProvider: AudioSourceProvidersType;
   audioSourceId: string;  // where audio came from (e.g. GCS URI, upload ID)
   language: string;
   speakers: Speaker[];
   segments: TranscriptSegment[];
+  orderIndex?: number; // Optional: for sorting multiple transcripts per audio file (default: 0)
   createdAt: Date;
 }

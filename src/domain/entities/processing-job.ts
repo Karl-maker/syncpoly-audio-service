@@ -2,6 +2,7 @@ export interface ProcessingJob {
   id: string;
   audioFileId: string;
   userId: string;
+  idempotencyKey?: string; // Optional: idempotency key to prevent duplicate processing
   status: "pending" | "processing" | "completed" | "failed";
   transcriptId?: string;
   vectorStoreType?: string; // e.g., "openai", "in-memory"

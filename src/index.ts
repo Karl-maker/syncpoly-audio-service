@@ -149,7 +149,9 @@ async function main() {
       createBreakdownUseCase,
       updateBreakdownUseCase,
       getBreakdownUseCase,
-      deleteBreakdownUseCase
+      deleteBreakdownUseCase,
+      audioFileRepository,
+      breakdownRepository
     );
     const chatController = new ChatController(chatUseCase);
 

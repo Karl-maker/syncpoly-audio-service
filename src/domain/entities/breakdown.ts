@@ -5,6 +5,7 @@ export interface Breakdown {
   id: string;
   userId: string;
   audioFileId: string;
+  orderIndex?: number; // Optional: for sorting multiple breakdowns per audio file (default: 0)
   introduction: string;
   bulletPoints: string[];
   mainTakeaways: string[];

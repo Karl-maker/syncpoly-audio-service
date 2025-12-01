@@ -11,8 +11,10 @@ import { CreateBreakdownUseCase } from "../../application/use-cases/create-break
 import { UpdateBreakdownUseCase } from "../../application/use-cases/update-breakdown.use-case";
 import { GetBreakdownUseCase } from "../../application/use-cases/get-breakdown.use-case";
 import { DeleteBreakdownUseCase } from "../../application/use-cases/delete-breakdown.use-case";
+import { AudioFileRepository } from "../../infrastructure/database/repositories/audio-file.repository";
+import { BreakdownRepository } from "../../infrastructure/database/repositories/breakdown.repository";
 import { UploadAudioResponse } from "../dto/upload-audio.dto";
-import { ProcessAudioResponse } from "../dto/process-audio.dto";
+import { ProcessAudioRequest, ProcessAudioResponse } from "../dto/process-audio.dto";
 import { MemoryUsageResponse } from "../dto/memory-usage.dto";
 import { UploadProgressResponse } from "../dto/upload-progress.dto";
 import { TranscriptResponse, toTranscriptResponse } from "../dto/transcript.dto";
@@ -29,7 +31,9 @@ export class AudioController {
     private createBreakdownUseCase: CreateBreakdownUseCase,
     private updateBreakdownUseCase: UpdateBreakdownUseCase,
     private getBreakdownUseCase: GetBreakdownUseCase,
-    private deleteBreakdownUseCase: DeleteBreakdownUseCase
+    private deleteBreakdownUseCase: DeleteBreakdownUseCase,
+    private audioFileRepository: AudioFileRepository,
+    private breakdownRepository: BreakdownRepository
   ) {}
 
   async uploadAudio(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -88,8 +92,8 @@ export class AudioController {
         return;
       }
 
-      const { audioFileId, vectorStoreType, skipTranscription, skipEmbeddings, skipVectorStore, options } =
-        req.body;
+      const { audioFileId, idempotencyKey, vectorStoreType, skipTranscription, skipEmbeddings, skipVectorStore, options } =
+        req.body as ProcessAudioRequest;
 
       if (!audioFileId) {
         res.status(400).json({ error: "audioFileId is required" });
@@ -99,6 +103,7 @@ export class AudioController {
       const job = await this.processAudioUseCase.execute({
         audioFileId,
         userId: req.user.userId,
+        idempotencyKey,
         vectorStoreType,
         skipTranscription,
         skipEmbeddings,
@@ -223,24 +228,32 @@ export class AudioController {
       }
 
       const audioFileId = req.params.audioFileId;
+      const orderIndex = req.query.orderIndex ? parseInt(req.query.orderIndex as string, 10) : undefined;
 
       if (!audioFileId) {
         res.status(400).json({ error: "audioFileId is required" });
         return;
       }
 
-      const transcript = await this.getTranscriptUseCase.execute({
+      const result = await this.getTranscriptUseCase.execute({
         audioFileId,
         userId: req.user.userId,
+        orderIndex,
       });
 
-      if (!transcript) {
+      if (!result) {
         res.status(404).json({ error: "Transcript not found for this audio file" });
         return;
       }
 
-      const response: TranscriptResponse = toTranscriptResponse(transcript);
-      res.status(200).json(response);
+      // Handle both single transcript and array of transcripts
+      if (Array.isArray(result)) {
+        const responses = result.map((t) => toTranscriptResponse(t));
+        res.status(200).json({ transcripts: responses, count: responses.length });
+      } else {
+        const response: TranscriptResponse = toTranscriptResponse(result);
+        res.status(200).json(response);
+      }
     } catch (error: any) {
       if (error.message?.includes("not found")) {
         res.status(404).json({ error: error.message });
@@ -286,6 +299,48 @@ export class AudioController {
         return;
       }
       res.status(500).json({ error: error.message || "Failed to generate breakdown" });
+    }
+  }
+
+  async getBreakdowns(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const audioFileId = req.params.audioFileId;
+
+      if (!audioFileId) {
+        res.status(400).json({ error: "audioFileId is required" });
+        return;
+      }
+
+      // Verify audio file belongs to user
+      const audioFile = await this.audioFileRepository.findById(audioFileId);
+      if (!audioFile) {
+        res.status(404).json({ error: "Audio file not found" });
+        return;
+      }
+      if (audioFile.userId !== req.user.userId) {
+        res.status(403).json({ error: "Unauthorized: Audio file does not belong to user" });
+        return;
+      }
+
+      const breakdowns = await this.breakdownRepository.findByAudioFileId(audioFileId);
+      const responses = breakdowns.map((b) => toBreakdownResponse(b));
+
+      res.status(200).json({ breakdowns: responses, count: responses.length });
+    } catch (error: any) {
+      if (error.message?.includes("not found")) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      if (error.message?.includes("Unauthorized")) {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      res.status(500).json({ error: error.message || "Failed to get breakdowns" });
     }
   }
 

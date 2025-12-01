@@ -26,6 +26,7 @@ export interface UpdateBreakdownRequest {
 export interface BreakdownResponse {
   id: string;
   audioFileId: string;
+  orderIndex?: number;
   introduction: string;
   bulletPoints: string[];
   mainTakeaways: string[];
@@ -56,6 +57,7 @@ export function toBreakdownResponse(breakdown: Breakdown): BreakdownResponse {
   return {
     id: breakdown.id,
     audioFileId: breakdown.audioFileId,
+    orderIndex: breakdown.orderIndex,
     introduction: breakdown.introduction,
     bulletPoints: breakdown.bulletPoints,
     mainTakeaways: breakdown.mainTakeaways,

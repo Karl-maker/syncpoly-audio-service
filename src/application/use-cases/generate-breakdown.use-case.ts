@@ -13,6 +13,7 @@ import { randomUUID } from "crypto";
 export interface GenerateBreakdownUseCaseParams {
   audioFileId: string;
   userId: string;
+  orderIndex?: number; // Optional: generate breakdown for specific transcript chunk
 }
 
 export class GenerateBreakdownUseCase {
@@ -43,25 +44,49 @@ export class GenerateBreakdownUseCase {
       throw new Error("Unauthorized: Audio file does not belong to user");
     }
 
-    // Check if breakdown already exists
-    const existingBreakdown = await this.breakdownRepository.findByAudioFileId(audioFileId);
-    if (existingBreakdown) {
-      return existingBreakdown;
-    }
+    // Get all transcripts for the audio file (sorted by orderIndex)
+    let transcripts = await this.transcriptRepository.findByAudioFileId(audioFileId);
 
-    // Get transcript for the audio file
-    if (!audioFile.s3Bucket || !audioFile.s3Key) {
-      throw new Error("Audio file does not have S3 location information.");
+    // Backward compatibility: if no transcripts found by audioFileId, try audioSourceId
+    if (transcripts.length === 0) {
+      if (!audioFile.s3Bucket || !audioFile.s3Key) {
+        throw new Error("Audio file does not have S3 location information.");
+      }
+      const audioSourceId = `${audioFile.s3Bucket}/${audioFile.s3Key}`;
+      transcripts = await this.transcriptRepository.findByAudioSourceId(audioSourceId);
     }
-    const audioSourceId = `${audioFile.s3Bucket}/${audioFile.s3Key}`;
-    const transcripts = await this.transcriptRepository.findByAudioSourceId(audioSourceId);
 
     if (transcripts.length === 0) {
       throw new Error(`No transcript found for audio file ID ${audioFileId}. Please process the audio first.`);
     }
 
-    const transcript = transcripts[0];
-    const transcriptText = transcript.segments.map((seg) => seg.text).join(" ");
+    // If orderIndex is specified, only generate for that specific transcript
+    const transcriptsToProcess = params.orderIndex !== undefined
+      ? transcripts.filter((t) => (t.orderIndex ?? 0) === params.orderIndex)
+      : transcripts;
+
+    if (transcriptsToProcess.length === 0) {
+      throw new Error(
+        params.orderIndex !== undefined
+          ? `No transcript found with orderIndex ${params.orderIndex} for audio file ID ${audioFileId}`
+          : `No transcripts found for audio file ID ${audioFileId}`
+      );
+    }
+
+    // Generate breakdown for each transcript chunk
+    const breakdowns: Breakdown[] = [];
+
+    for (const transcript of transcriptsToProcess) {
+      const orderIndex = transcript.orderIndex ?? 0;
+
+      // Check if breakdown already exists for this orderIndex
+      const existingBreakdown = await this.breakdownRepository.findByAudioFileIdAndOrder(audioFileId, orderIndex);
+      if (existingBreakdown) {
+        breakdowns.push(existingBreakdown);
+        continue; // Skip generating for this chunk
+      }
+
+      const transcriptText = transcript.segments.map((seg) => seg.text).join(" ");
 
     // Generate breakdown using OpenAI
     const breakdownPrompt = `Create a comprehensive breakdown of the following audio transcript.
@@ -133,18 +158,24 @@ Return the breakdown in a clear, structured format.`;
       storedQuestions.push(stored);
     }
 
-    // Create breakdown entity
-    const breakdown = await this.breakdownRepository.create({
-      userId,
-      audioFileId,
-      introduction: parsed.introduction || "No introduction generated.",
-      bulletPoints: parsed.bulletPoints || [],
-      mainTakeaways: parsed.mainTakeaways || [],
-      actionItems: storedTasks,
-      questions: storedQuestions,
-    });
+      // Create breakdown entity for this transcript chunk
+      const breakdown = await this.breakdownRepository.create({
+        userId,
+        audioFileId,
+        orderIndex, // Set orderIndex to match transcript
+        introduction: parsed.introduction || "No introduction generated.",
+        bulletPoints: parsed.bulletPoints || [],
+        mainTakeaways: parsed.mainTakeaways || [],
+        actionItems: storedTasks,
+        questions: storedQuestions,
+      });
 
-    return breakdown;
+      breakdowns.push(breakdown);
+    }
+
+    // Return the first breakdown for backward compatibility
+    // In the future, we might want to return all breakdowns
+    return breakdowns[0];
   }
 
   /**

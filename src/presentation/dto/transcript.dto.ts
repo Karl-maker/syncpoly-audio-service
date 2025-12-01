@@ -2,6 +2,7 @@ import { Transcript } from "../../domain/entities/transcript";
 
 export interface TranscriptResponse {
   id: string;
+  audioFileId?: string;
   audioSourceId: string;
   audioSourceProvider: string;
   language: string;
@@ -16,12 +17,14 @@ export interface TranscriptResponse {
     startTimeSec: number;
     endTimeSec: number;
   }>;
+  orderIndex?: number;
   createdAt: Date;
 }
 
 export function toTranscriptResponse(transcript: Transcript): TranscriptResponse {
   return {
     id: transcript.id,
+    audioFileId: transcript.audioFileId,
     audioSourceId: transcript.audioSourceId,
     audioSourceProvider: transcript.audioSourceProvider,
     language: transcript.language,
@@ -36,6 +39,7 @@ export function toTranscriptResponse(transcript: Transcript): TranscriptResponse
       startTimeSec: s.startTimeSec,
       endTimeSec: s.endTimeSec,
     })),
+    orderIndex: transcript.orderIndex,
     createdAt: transcript.createdAt,
   };
 }
