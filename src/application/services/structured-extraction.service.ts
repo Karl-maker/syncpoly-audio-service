@@ -1,0 +1,187 @@
+import OpenAI from "openai";
+import { Task } from "../../domain/entities/task";
+import { Question, QuestionType } from "../../domain/entities/question";
+import { randomUUID } from "crypto";
+
+export interface ExtractedObjects {
+  tasks: Task[];
+  questions: Question[];
+}
+
+export class StructuredExtractionService {
+  private openaiClient: OpenAI;
+
+  constructor(apiKey: string) {
+    this.openaiClient = new OpenAI({ apiKey });
+  }
+
+  /**
+   * Extract tasks and questions from AI response text
+   */
+  async extractStructuredObjects(
+    responseText: string,
+    userId: string,
+    audioFileId?: string
+  ): Promise<ExtractedObjects> {
+    try {
+      const extractionPrompt = `Analyze the following text and extract any tasks/action items/homework and questions that are mentioned.
+
+Text to analyze:
+${responseText}
+
+Extract:
+1. Tasks/Action Items/Homework: Any items that need to be done, with due dates if mentioned, descriptions, and priority if inferable.
+2. Questions: Any questions that could be used for testing/learning (true-false, multiple choice, or short answer).
+
+Return a JSON object with this structure:
+{
+  "tasks": [
+    {
+      "description": "string (required)",
+      "dueDate": "ISO date string (optional, only if mentioned)",
+      "priority": "low|medium|high (optional, infer from context)"
+    }
+  ],
+  "questions": [
+    {
+      "type": "true-false|multiple-choice|short-answer",
+      "question": "string (required)",
+      "options": [{"id": "string", "text": "string", "isCorrect": boolean}], // Required for multiple-choice and true-false. For true-false, mark which option (True or False) is correct.
+      "correctAnswer": "string (optional, for short-answer or as reference. For true-false, use 'true' or 'false')",
+      "explanation": "string (optional)"
+    }
+  ]
+}
+
+IMPORTANT: For true-false questions, you MUST:
+- Include both "True" and "False" options
+- Set isCorrect: true for the correct option and isCorrect: false for the incorrect option
+- Set correctAnswer to "true" or "false" to indicate the correct answer
+
+If no tasks or questions are found, return empty arrays. Only extract items that are clearly tasks or questions.`;
+
+      const response = await this.openaiClient.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are a structured data extraction assistant. Extract tasks and questions from text and return valid JSON only.",
+          },
+          {
+            role: "user",
+            content: extractionPrompt,
+          },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.3, // Lower temperature for more consistent extraction
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        return { tasks: [], questions: [] };
+      }
+
+      const parsed = JSON.parse(content) as {
+        tasks?: Array<{
+          description: string;
+          dueDate?: string;
+          priority?: "low" | "medium" | "high";
+        }>;
+        questions?: Array<{
+          type: string;
+          question: string;
+          options?: Array<{ id: string; text: string; isCorrect?: boolean }>;
+          correctAnswer?: string;
+          explanation?: string;
+        }>;
+      };
+
+      // Validate and convert to domain entities
+      const tasks: Task[] = (parsed.tasks || [])
+        .filter((t) => t.description && t.description.trim().length > 0)
+        .map((t) => ({
+          id: randomUUID(),
+          userId,
+          audioFileId,
+          description: t.description.trim(),
+          dueDate: t.dueDate ? new Date(t.dueDate) : undefined,
+          priority: t.priority || undefined,
+          status: "pending" as const,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }));
+
+      const questions: Question[] = (parsed.questions || [])
+        .filter((q) => {
+          // Filter out invalid questions first
+          if (!q.question || q.question.trim().length === 0) {
+            return false;
+          }
+          const type = this.validateQuestionType(q.type);
+          return type !== null;
+        })
+        .map((q) => {
+          const type = this.validateQuestionType(q.type)!; // Safe because we filtered above
+
+          // Validate options for multiple-choice and true-false
+          let options: Question["options"] = undefined;
+          if (type === "multiple-choice") {
+            if (q.options && Array.isArray(q.options) && q.options.length > 0) {
+              // Use provided options
+              options = q.options.map((opt) => ({
+                id: opt.id || randomUUID(),
+                text: opt.text || "",
+                isCorrect: opt.isCorrect,
+              }));
+            }
+          } else if (type === "true-false") {
+            // For true-false questions, always create True/False options
+            if (q.options && Array.isArray(q.options) && q.options.length > 0) {
+              // Use provided options if they exist
+              options = q.options.map((opt) => ({
+                id: opt.id || randomUUID(),
+                text: opt.text || "",
+                isCorrect: opt.isCorrect,
+              }));
+            } else {
+              // Create default true/false options - determine correct answer from correctAnswer field
+              const correctAnswer = q.correctAnswer?.toLowerCase().trim();
+              const isTrueCorrect = correctAnswer === "true" || correctAnswer === "t";
+              options = [
+                { id: randomUUID(), text: "True", isCorrect: isTrueCorrect },
+                { id: randomUUID(), text: "False", isCorrect: !isTrueCorrect },
+              ];
+            }
+          }
+
+          return {
+            id: randomUUID(),
+            userId,
+            audioFileId,
+            type,
+            question: q.question.trim(),
+            options,
+            correctAnswer: q.correctAnswer || undefined,
+            explanation: q.explanation || undefined,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+        });
+
+      return { tasks, questions };
+    } catch (error) {
+      console.error("[StructuredExtractionService] Error extracting structured objects:", error);
+      // Fallback: return empty arrays on error
+      return { tasks: [], questions: [] };
+    }
+  }
+
+  private validateQuestionType(type: string): QuestionType | null {
+    const validTypes: QuestionType[] = ["true-false", "multiple-choice", "short-answer"];
+    if (validTypes.includes(type as QuestionType)) {
+      return type as QuestionType;
+    }
+    return null;
+  }
+}
+

@@ -3,6 +3,11 @@ import { IEmbeddingProvider } from "../../domain/interfaces/iembedding.provider"
 import { IVectorStore } from "../../domain/interfaces/ivector.store";
 import { AudioFileRepository } from "../../infrastructure/database/repositories/audio-file.repository";
 import { ChatMessageRepository } from "../../infrastructure/database/repositories/chat-message.repository";
+import { TaskRepository } from "../../infrastructure/database/repositories/task.repository";
+import { QuestionRepository } from "../../infrastructure/database/repositories/question.repository";
+import { StructuredExtractionService } from "../services/structured-extraction.service";
+import { Task } from "../../domain/entities/task";
+import { Question } from "../../domain/entities/question";
 
 export interface ChatUseCaseParams {
   userId: string;
@@ -11,20 +16,30 @@ export interface ChatUseCaseParams {
   topK?: number;
 }
 
+export interface ChatUseCaseResult {
+  content: string;
+  tasks?: Task[];
+  questions?: Question[];
+}
+
 export class ChatUseCase {
   private openaiClient: OpenAI;
+  private extractionService: StructuredExtractionService;
 
   constructor(
     private embeddingProvider: IEmbeddingProvider,
     private vectorStore: IVectorStore,
     private audioFileRepository: AudioFileRepository,
     private chatMessageRepository: ChatMessageRepository,
+    private taskRepository: TaskRepository,
+    private questionRepository: QuestionRepository,
     openaiApiKey: string
   ) {
     this.openaiClient = new OpenAI({ apiKey: openaiApiKey });
+    this.extractionService = new StructuredExtractionService(openaiApiKey);
   }
 
-  async *execute(params: ChatUseCaseParams): AsyncGenerator<string, void, unknown> {
+  async *execute(params: ChatUseCaseParams): AsyncGenerator<string | ChatUseCaseResult, void, unknown> {
     // Default topK to 10 for better results, especially when filtering
     const { userId, message, audioFileId, topK = 10 } = params;
 
@@ -179,10 +194,84 @@ export class ChatUseCase {
       role: "assistant",
       content: fullResponse,
     });
+
+    // Extract structured objects (tasks and questions) from response
+    // This runs asynchronously and doesn't block the response
+    this.extractAndStoreStructuredObjects(fullResponse, userId, audioFileId).catch((error) => {
+      console.error("[Chat] Error extracting structured objects:", error);
+      // Don't throw - this is a non-critical operation
+    });
+  }
+
+  /**
+   * Extract and store tasks and questions from the response
+   */
+  private async extractAndStoreStructuredObjects(
+    responseText: string,
+    userId: string,
+    audioFileId?: string
+  ): Promise<void> {
+    try {
+      const extracted = await this.extractionService.extractStructuredObjects(
+        responseText,
+        userId,
+        audioFileId
+      );
+
+      // Store tasks
+      if (extracted.tasks.length > 0) {
+        console.log(`[Chat] Extracted ${extracted.tasks.length} task(s)`);
+        for (const task of extracted.tasks) {
+          await this.taskRepository.create({
+            userId: task.userId,
+            audioFileId: task.audioFileId,
+            description: task.description,
+            dueDate: task.dueDate,
+            priority: task.priority,
+            status: task.status,
+          });
+        }
+      }
+
+      // Store questions
+      if (extracted.questions.length > 0) {
+        console.log(`[Chat] Extracted ${extracted.questions.length} question(s)`);
+        for (const question of extracted.questions) {
+          await this.questionRepository.create({
+            userId: question.userId,
+            audioFileId: question.audioFileId,
+            type: question.type,
+            question: question.question,
+            options: question.options,
+            correctAnswer: question.correctAnswer,
+            explanation: question.explanation,
+          });
+        }
+      }
+    } catch (error) {
+      console.error("[Chat] Error in extractAndStoreStructuredObjects:", error);
+      // Silently fail - don't disrupt the chat flow
+    }
+  }
+
+  /**
+   * Get extracted objects for a response (for non-streaming use)
+   */
+  async getExtractedObjects(
+    responseText: string,
+    userId: string,
+    audioFileId?: string
+  ): Promise<{ tasks: Task[]; questions: Question[] }> {
+    return await this.extractionService.extractStructuredObjects(
+      responseText,
+      userId,
+      audioFileId
+    );
   }
 
   private buildSystemPrompt(audioFileId: string | undefined, totalAudioFiles: number): string {
     const memoryNote = "You have access to the conversation history, so you can reference past discussions and maintain context across the conversation.";
+    const taskNote = "When appropriate, you can suggest action items, tasks, or homework based on the conversation. If the user asks for questions to test their understanding, you can generate questions (true/false, multiple choice, or short answer).";
 
     if (audioFileId) {
       return `You are an AI assistant helping a user discuss details about a specific audio file they have uploaded and processed. 
@@ -195,6 +284,7 @@ Focus on:
 - Providing insights based on the transcriptions
 - Being helpful and conversational
 - Remembering and referencing previous parts of the conversation
+- ${taskNote}
 
 If asked about information not in the provided context, politely indicate that you don't have that information in the current audio file.`;
     } else {
@@ -209,6 +299,7 @@ Focus on:
 - Comparing or summarizing content across multiple audio files if relevant
 - Being helpful and conversational
 - Remembering and referencing previous parts of the conversation
+- ${taskNote}
 
 If asked about information not in the provided context, politely indicate that you don't have that information in their audio files.`;
     }

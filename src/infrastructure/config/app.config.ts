@@ -15,15 +15,16 @@ export interface AppConfig {
   // OpenAI
   openaiApiKey: string;
 
-  // AWS S3
-  aws: {
-    accessKeyId?: string;
-    secretAccessKey?: string;
-    region: string;
-    s3Bucket?: string;
-    s3Endpoint?: string; // For S3-compatible services
-    s3ForcePathStyle?: boolean; // Use path-style addressing
-  };
+        // AWS S3
+        aws: {
+          accessKeyId?: string;
+          secretAccessKey?: string;
+          region: string;
+          s3Bucket?: string;
+          s3Endpoint?: string; // For S3-compatible services
+          s3ForcePathStyle?: boolean; // Use path-style addressing
+          cdnUrl?: string; // Optional CDN URL for S3 objects (e.g., "https://cdn.example.com")
+        };
 
   // MongoDB
   mongodb: {
@@ -49,14 +50,15 @@ function getConfig(): AppConfig {
 
     openaiApiKey,
 
-    aws: {
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      region: (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1").trim(),
-      s3Bucket: process.env.S3_BUCKET,
-      s3Endpoint: process.env.S3_ENDPOINT,
-      s3ForcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
-    },
+          aws: {
+            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+            region: (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1").trim(),
+            s3Bucket: process.env.S3_BUCKET,
+            s3Endpoint: process.env.S3_ENDPOINT,
+            s3ForcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
+            cdnUrl: process.env.CDN_URL, // Optional CDN URL
+          },
 
     mongodb: {
       uri: process.env.MONGODB_URI || "mongodb://localhost:27017",

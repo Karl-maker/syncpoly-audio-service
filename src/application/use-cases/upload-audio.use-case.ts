@@ -11,6 +11,7 @@ export interface UploadAudioUseCaseParams {
   userId: string;
   s3Config?: S3AudioStorageConfig;
   s3Bucket?: string;
+  cdnUrl?: string; // Optional CDN URL base (e.g., "https://cdn.example.com")
 }
 
 export class UploadAudioUseCase {
@@ -33,7 +34,7 @@ export class UploadAudioUseCase {
     } as Omit<UploadJob, "id" | "createdAt" | "updatedAt">);
 
     // Start upload asynchronously
-    this.uploadAudioAsync(uploadJob, file, userId, s3Bucket).catch((error) => {
+    this.uploadAudioAsync(uploadJob, file, userId, s3Bucket, params.cdnUrl).catch((error) => {
       console.error(`Upload job ${uploadJob.id} failed:`, error);
     });
 
@@ -44,7 +45,8 @@ export class UploadAudioUseCase {
     uploadJob: UploadJob,
     file: Express.Multer.File,
     userId: string,
-    s3Bucket?: string
+    s3Bucket?: string,
+    cdnUrl?: string
   ): Promise<void> {
     try {
       // Update job status to uploading
@@ -88,6 +90,16 @@ export class UploadAudioUseCase {
         s3Key = result.key;
       }
 
+      // Generate CDN URL if CDN is configured
+      let generatedCdnUrl: string | undefined;
+      if (cdnUrl && s3BucketName && s3Key) {
+        // Remove trailing slash from CDN URL if present
+        const cdnBase = cdnUrl.replace(/\/$/, "");
+        // CDN URL format: https://cdn.example.com/bucket/key
+        generatedCdnUrl = `${cdnBase}/${s3BucketName}/${s3Key}`;
+        console.log(`[UploadAudio] Generated CDN URL: ${generatedCdnUrl}`);
+      }
+
       // Save metadata to database
       const now = new Date();
       const audioFile = await this.audioFileRepository.create({
@@ -96,6 +108,7 @@ export class UploadAudioUseCase {
         originalFilename: file.originalname,
         s3Bucket: s3BucketName,
         s3Key,
+        cdnUrl: generatedCdnUrl,
         audioSourceProvider,
         fileSize: file.size,
         mimeType: file.mimetype,

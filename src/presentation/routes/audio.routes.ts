@@ -47,6 +47,15 @@ export function createAudioRoutes(
   // Get transcript for an audio file
   router.get("/:audioFileId/transcript", (req, res) => audioController.getTranscript(req as any, res));
 
+  // Generate breakdown for an audio file
+  router.post("/:audioFileId/breakdown/generate", (req, res) => audioController.generateBreakdown(req as any, res));
+
+  // CRUD endpoints for breakdown
+  router.post("/:audioFileId/breakdown", (req, res) => audioController.createBreakdown(req as any, res));
+  router.get("/breakdown/:breakdownId", (req, res) => audioController.getBreakdown(req as any, res));
+  router.put("/breakdown/:breakdownId", (req, res) => audioController.updateBreakdown(req as any, res));
+  router.delete("/breakdown/:breakdownId", (req, res) => audioController.deleteBreakdown(req as any, res));
+
   // Chat endpoint
   router.post("/chat", (req, res) => chatController.chat(req as any, res));
 

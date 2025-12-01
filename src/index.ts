@@ -6,12 +6,20 @@ import { ProcessingJobRepository } from "./infrastructure/database/repositories/
 import { UploadJobRepository } from "./infrastructure/database/repositories/upload-job.repository";
 import { TranscriptRepository } from "./infrastructure/database/repositories/transcript.repository";
 import { ChatMessageRepository } from "./infrastructure/database/repositories/chat-message.repository";
+import { TaskRepository } from "./infrastructure/database/repositories/task.repository";
+import { QuestionRepository } from "./infrastructure/database/repositories/question.repository";
+import { BreakdownRepository } from "./infrastructure/database/repositories/breakdown.repository";
 import { S3AudioStorage } from "./infrastructure/aws/s3.audio.storage";
 import { UploadAudioUseCase } from "./application/use-cases/upload-audio.use-case";
 import { ProcessAudioUseCase } from "./application/use-cases/process-audio.use-case";
 import { GetMemoryUsageUseCase } from "./application/use-cases/get-memory-usage.use-case";
 import { GetUploadProgressUseCase } from "./application/use-cases/get-upload-progress.use-case";
 import { GetTranscriptUseCase } from "./application/use-cases/get-transcript.use-case";
+import { GenerateBreakdownUseCase } from "./application/use-cases/generate-breakdown.use-case";
+import { CreateBreakdownUseCase } from "./application/use-cases/create-breakdown.use-case";
+import { UpdateBreakdownUseCase } from "./application/use-cases/update-breakdown.use-case";
+import { GetBreakdownUseCase } from "./application/use-cases/get-breakdown.use-case";
+import { DeleteBreakdownUseCase } from "./application/use-cases/delete-breakdown.use-case";
 import { AudioController } from "./presentation/controllers/audio.controller";
 import { ChatController } from "./presentation/controllers/chat.controller";
 import { createAudioRoutes } from "./presentation/routes/audio.routes";
@@ -37,6 +45,9 @@ async function main() {
     const uploadJobRepository = new UploadJobRepository(db);
     const transcriptRepository = new TranscriptRepository(db);
     const chatMessageRepository = new ChatMessageRepository(db);
+    const taskRepository = new TaskRepository(db);
+    const questionRepository = new QuestionRepository(db);
+    const breakdownRepository = new BreakdownRepository(db);
 
     // Initialize infrastructure
     const transcriptionProvider = new OpenAITranscriptionProvider(config.openaiApiKey);
@@ -94,6 +105,27 @@ async function main() {
       transcriptRepository,
       audioFileRepository
     );
+    const generateBreakdownUseCase = new GenerateBreakdownUseCase(
+      audioFileRepository,
+      breakdownRepository,
+      transcriptRepository,
+      taskRepository,
+      questionRepository,
+      config.openaiApiKey
+    );
+    const createBreakdownUseCase = new CreateBreakdownUseCase(
+      audioFileRepository,
+      breakdownRepository,
+      taskRepository,
+      questionRepository
+    );
+    const updateBreakdownUseCase = new UpdateBreakdownUseCase(
+      breakdownRepository,
+      taskRepository,
+      questionRepository
+    );
+    const getBreakdownUseCase = new GetBreakdownUseCase(breakdownRepository);
+    const deleteBreakdownUseCase = new DeleteBreakdownUseCase(breakdownRepository);
 
     // Initialize chat use case
     const chatUseCase = new ChatUseCase(
@@ -101,6 +133,8 @@ async function main() {
       chatVectorStore,
       audioFileRepository,
       chatMessageRepository,
+      taskRepository,
+      questionRepository,
       config.openaiApiKey
     );
 
@@ -110,7 +144,12 @@ async function main() {
       processAudioUseCase,
       getMemoryUsageUseCase,
       getUploadProgressUseCase,
-      getTranscriptUseCase
+      getTranscriptUseCase,
+      generateBreakdownUseCase,
+      createBreakdownUseCase,
+      updateBreakdownUseCase,
+      getBreakdownUseCase,
+      deleteBreakdownUseCase
     );
     const chatController = new ChatController(chatUseCase);
 
