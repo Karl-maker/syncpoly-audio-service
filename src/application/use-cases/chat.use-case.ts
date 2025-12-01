@@ -228,6 +228,7 @@ export class ChatUseCase {
             description: task.description,
             dueDate: task.dueDate,
             priority: task.priority,
+            location: task.location,
             status: task.status,
           });
         }

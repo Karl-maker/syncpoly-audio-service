@@ -30,7 +30,7 @@ Text to analyze:
 ${responseText}
 
 Extract:
-1. Tasks/Action Items/Homework: Any items that need to be done, with due dates if mentioned, descriptions, and priority if inferable.
+1. Tasks/Action Items/Homework: Any items that need to be done, with due dates if mentioned, descriptions, priority if inferable, and location if mentioned.
 2. Questions: Any questions that could be used for testing/learning (true-false, multiple choice, or short answer).
 
 Return a JSON object with this structure:
@@ -39,7 +39,8 @@ Return a JSON object with this structure:
     {
       "description": "string (required)",
       "dueDate": "ISO date string (optional, only if mentioned)",
-      "priority": "low|medium|high (optional, infer from context)"
+      "priority": "low|medium|high (optional, infer from context)",
+      "location": "string (optional, only if a location is mentioned)"
     }
   ],
   "questions": [
@@ -86,6 +87,7 @@ If no tasks or questions are found, return empty arrays. Only extract items that
           description: string;
           dueDate?: string;
           priority?: "low" | "medium" | "high";
+          location?: string;
         }>;
         questions?: Array<{
           type: string;
@@ -106,6 +108,7 @@ If no tasks or questions are found, return empty arrays. Only extract items that
           description: t.description.trim(),
           dueDate: t.dueDate ? new Date(t.dueDate) : undefined,
           priority: t.priority || undefined,
+          location: t.location?.trim() || undefined,
           status: "pending" as const,
           createdAt: new Date(),
           updatedAt: new Date(),

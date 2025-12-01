@@ -139,6 +139,7 @@ Return the breakdown in a clear, structured format.`;
         description: task.description,
         dueDate: task.dueDate,
         priority: task.priority,
+        location: task.location,
         status: task.status,
       });
       storedTasks.push(stored);
