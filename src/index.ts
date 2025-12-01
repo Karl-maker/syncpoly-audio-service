@@ -5,6 +5,7 @@ import { AudioFileRepository } from "./infrastructure/database/repositories/audi
 import { ProcessingJobRepository } from "./infrastructure/database/repositories/processing-job.repository";
 import { UploadJobRepository } from "./infrastructure/database/repositories/upload-job.repository";
 import { TranscriptRepository } from "./infrastructure/database/repositories/transcript.repository";
+import { ChatMessageRepository } from "./infrastructure/database/repositories/chat-message.repository";
 import { S3AudioStorage } from "./infrastructure/aws/s3.audio.storage";
 import { UploadAudioUseCase } from "./application/use-cases/upload-audio.use-case";
 import { ProcessAudioUseCase } from "./application/use-cases/process-audio.use-case";
@@ -35,6 +36,7 @@ async function main() {
     const processingJobRepository = new ProcessingJobRepository(db);
     const uploadJobRepository = new UploadJobRepository(db);
     const transcriptRepository = new TranscriptRepository(db);
+    const chatMessageRepository = new ChatMessageRepository(db);
 
     // Initialize infrastructure
     const transcriptionProvider = new OpenAITranscriptionProvider(config.openaiApiKey);
@@ -98,6 +100,7 @@ async function main() {
       embeddingProvider,
       chatVectorStore,
       audioFileRepository,
+      chatMessageRepository,
       config.openaiApiKey
     );
 

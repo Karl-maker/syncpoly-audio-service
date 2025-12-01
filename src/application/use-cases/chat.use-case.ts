@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { IEmbeddingProvider } from "../../domain/interfaces/iembedding.provider";
 import { IVectorStore } from "../../domain/interfaces/ivector.store";
 import { AudioFileRepository } from "../../infrastructure/database/repositories/audio-file.repository";
+import { ChatMessageRepository } from "../../infrastructure/database/repositories/chat-message.repository";
 
 export interface ChatUseCaseParams {
   userId: string;
@@ -17,6 +18,7 @@ export class ChatUseCase {
     private embeddingProvider: IEmbeddingProvider,
     private vectorStore: IVectorStore,
     private audioFileRepository: AudioFileRepository,
+    private chatMessageRepository: ChatMessageRepository,
     openaiApiKey: string
   ) {
     this.openaiClient = new OpenAI({ apiKey: openaiApiKey });
@@ -51,12 +53,28 @@ export class ChatUseCase {
       throw new Error("No audio files found for user");
     }
 
-    // Embed the user's query
+    // Store user message
+    const userMessage = await this.chatMessageRepository.create({
+      userId,
+      audioFileId: audioFileId,
+      role: "user",
+      content: message,
+    });
+
+    // Get last 10 messages for conversation context (excluding current message)
+    const conversationHistory = await this.chatMessageRepository.getConversationHistory(
+      userId,
+      audioFileId,
+      10
+    );
+
+    // Embed the user's query for audio search
     const [queryEmbedding] = await this.embeddingProvider.embedTexts([
       { id: "query", text: message },
     ]);
 
     // Build search filter with userId (required) and optional audioFileId
+    // Only search audio embeddings (not conversation messages)
     const searchFilter: Record<string, any> = {
       userId: userId, // Always filter by userId for security
     };
@@ -67,7 +85,7 @@ export class ChatUseCase {
       searchFilter.audioSourceId = audioSourceIds[0];
     }
 
-    console.log(`[Chat] Searching vector store for query: "${message}" with filter:`, searchFilter);
+    console.log(`[Chat] Searching audio vector store for query: "${message}" with filter:`, searchFilter);
 
     const searchResults = await this.vectorStore.search(
       queryEmbedding.embedding,
@@ -75,7 +93,7 @@ export class ChatUseCase {
       searchFilter
     );
 
-    console.log(`[Chat] Found ${searchResults.length} search results`);
+    console.log(`[Chat] Found ${searchResults.length} audio search results`);
 
     // Results are already filtered by the vector store, but double-check for security
     const relevantChunks = searchResults.filter((r) => {
@@ -92,65 +110,97 @@ export class ChatUseCase {
       }
     });
 
-    console.log(`[Chat] Filtered to ${relevantChunks.length} relevant chunks`);
+    console.log(`[Chat] Filtered to ${relevantChunks.length} relevant audio chunks`);
 
-    // Build context from retrieved chunks
-    const context = relevantChunks
+    // Build context from retrieved audio chunks
+    const audioContext = relevantChunks
       .map((chunk, index) => {
         const text = chunk.metadata.text || "";
         const startTime = chunk.metadata.startTimeSec
           ? `[${this.formatTime(chunk.metadata.startTimeSec)}]`
           : "";
-        return `[Chunk ${index + 1}]${startTime} ${text}`;
+        return `[Audio Chunk ${index + 1}]${startTime} ${text}`;
       })
       .join("\n\n");
 
     // Build system prompt
     const systemPrompt = this.buildSystemPrompt(audioFileId, userAudioFiles.length);
 
+    // Build messages array with conversation history
+    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      {
+        role: "system",
+        content: systemPrompt,
+      },
+    ];
+
+    // Add conversation history (last 10 messages, excluding current message)
+    for (const msg of conversationHistory) {
+      if (msg.id !== userMessage.id && (msg.role === "user" || msg.role === "assistant")) {
+        messages.push({
+          role: msg.role,
+          content: msg.content,
+        });
+      }
+    }
+
+    // Add current user message with audio context
+    messages.push({
+      role: "user",
+      content: this.buildUserPrompt(message, audioContext),
+    });
+
+    console.log(`[Chat] Sending ${messages.length} messages to OpenAI (${conversationHistory.length} from history + current)`);
+
     // Create chat completion with streaming
     const stream = await this.openaiClient.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: this.buildUserPrompt(message, context),
-        },
-      ],
+      messages: messages as any,
       stream: true,
       temperature: 0.7,
     });
+
+    // Collect full response for storage
+    let fullResponse = "";
 
     // Stream the response
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content;
       if (content) {
+        fullResponse += content;
         yield content;
       }
     }
+
+    // Store assistant response
+    await this.chatMessageRepository.create({
+      userId,
+      audioFileId: audioFileId,
+      role: "assistant",
+      content: fullResponse,
+    });
   }
 
   private buildSystemPrompt(audioFileId: string | undefined, totalAudioFiles: number): string {
+    const memoryNote = "You have access to the conversation history, so you can reference past discussions and maintain context across the conversation.";
+
     if (audioFileId) {
       return `You are an AI assistant helping a user discuss details about a specific audio file they have uploaded and processed. 
 You have access to transcriptions and embeddings from their audio content. Use the provided context from the audio transcription 
-chunks to answer questions accurately. If the context doesn't contain relevant information, say so.
+chunks to answer questions accurately. If the context doesn't contain relevant information, say so. ${memoryNote}
 
 Focus on:
 - Discussing the content, topics, and details mentioned in the audio
 - Answering questions about what was said, who spoke, and when
 - Providing insights based on the transcriptions
 - Being helpful and conversational
+- Remembering and referencing previous parts of the conversation
 
 If asked about information not in the provided context, politely indicate that you don't have that information in the current audio file.`;
     } else {
       return `You are an AI assistant helping a user discuss details about their audio files. The user has ${totalAudioFiles} audio file(s) 
 that have been processed. You have access to transcriptions and embeddings from their audio content. Use the provided context from 
-the audio transcription chunks to answer questions accurately. If the context doesn't contain relevant information, say so.
+the audio transcription chunks to answer questions accurately. If the context doesn't contain relevant information, say so. ${memoryNote}
 
 Focus on:
 - Discussing the content, topics, and details mentioned across their audio files
@@ -158,6 +208,7 @@ Focus on:
 - Providing insights based on the transcriptions
 - Comparing or summarizing content across multiple audio files if relevant
 - Being helpful and conversational
+- Remembering and referencing previous parts of the conversation
 
 If asked about information not in the provided context, politely indicate that you don't have that information in their audio files.`;
     }
