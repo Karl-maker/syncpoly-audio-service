@@ -7,6 +7,8 @@ export interface AudioFile {
   originalFilename: string;
   s3Bucket?: string;
   s3Key?: string;
+  videoSourceS3Bucket?: string; // Optional: S3 bucket for original video file
+  videoSourceS3Key?: string; // Optional: S3 key for original video file
   cdnUrl?: string; // Optional CDN URL for playback
   audioSourceProvider: AudioSourceProvidersType;
   fileSize: number; // in bytes

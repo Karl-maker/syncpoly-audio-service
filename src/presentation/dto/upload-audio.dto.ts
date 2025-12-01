@@ -4,7 +4,7 @@ export interface UploadAudioRequest {
 
 export interface UploadAudioResponse {
   jobId: string;
-  status: "pending" | "uploading" | "completed" | "failed";
+  status: "pending" | "uploading" | "converting" | "completed" | "failed";
   message: string;
   audioFileId?: string;
 }

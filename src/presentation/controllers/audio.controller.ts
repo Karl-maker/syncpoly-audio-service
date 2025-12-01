@@ -2,6 +2,7 @@ import { Response } from "express";
 import { AuthenticatedRequest } from "../middleware/jwt.middleware";
 import { config } from "../../infrastructure/config/app.config";
 import { UploadAudioUseCase } from "../../application/use-cases/upload-audio.use-case";
+import { UploadVideoUseCase } from "../../application/use-cases/upload-video.use-case";
 import { ProcessAudioUseCase } from "../../application/use-cases/process-audio.use-case";
 import { GetMemoryUsageUseCase } from "../../application/use-cases/get-memory-usage.use-case";
 import { GetUploadProgressUseCase } from "../../application/use-cases/get-upload-progress.use-case";
@@ -25,6 +26,7 @@ import { BreakdownResponse, toBreakdownResponse, CreateBreakdownRequest, UpdateB
 export class AudioController {
   constructor(
     private uploadAudioUseCase: UploadAudioUseCase,
+    private uploadVideoUseCase: UploadVideoUseCase,
     private processAudioUseCase: ProcessAudioUseCase,
     private getMemoryUsageUseCase: GetMemoryUsageUseCase,
     private getUploadProgressUseCase: GetUploadProgressUseCase,
@@ -85,6 +87,55 @@ export class AudioController {
       res.status(202).json(response);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to upload audio" });
+    }
+  }
+
+  async uploadVideo(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: "No file uploaded" });
+        return;
+      }
+
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      // Ensure region is explicitly set as a string
+      const s3Region = config.aws.region || "us-east-1";
+      if (typeof s3Region !== "string") {
+        throw new Error("Invalid AWS_REGION configuration");
+      }
+
+      const uploadJob = await this.uploadVideoUseCase.execute({
+        file: req.file,
+        userId: req.user.userId,
+        s3Bucket: config.aws.s3Bucket,
+        cdnUrl: config.aws.cdnUrl, // Pass CDN URL if configured
+        s3Config: config.aws.accessKeyId
+          ? {
+              region: s3Region,
+              credentials: {
+                accessKeyId: config.aws.accessKeyId,
+                secretAccessKey: config.aws.secretAccessKey || "",
+              },
+              endpoint: config.aws.s3Endpoint,
+              forcePathStyle: config.aws.s3ForcePathStyle,
+            }
+          : undefined,
+      });
+
+      const response: UploadAudioResponse = {
+        jobId: uploadJob.id,
+        status: uploadJob.status,
+        message: "Video upload and conversion started",
+        audioFileId: uploadJob.audioFileId,
+      };
+
+      res.status(202).json(response);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to upload video" });
     }
   }
 

@@ -19,6 +19,21 @@ const upload = multer({
   },
 });
 
+const uploadVideo = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 500 * 1024 * 1024, // 500MB limit for videos
+  },
+  fileFilter: (_req, file, cb) => {
+    // Accept video files
+    if (file.mimetype.startsWith("video/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only video files are allowed"));
+    }
+  },
+});
+
 export function createAudioRoutes(
   audioController: AudioController,
   chatController: ChatController
@@ -33,6 +48,13 @@ export function createAudioRoutes(
     "/upload",
     upload.single("file"),
     (req, res) => audioController.uploadAudio(req as any, res)
+  );
+
+  // Upload video file (converts to MP3)
+  router.post(
+    "/upload/video",
+    uploadVideo.single("file"),
+    (req, res) => audioController.uploadVideo(req as any, res)
   );
 
   // Process audio
