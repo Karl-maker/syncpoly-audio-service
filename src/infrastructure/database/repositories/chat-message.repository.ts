@@ -9,7 +9,9 @@ export class ChatMessageRepository extends MongoDBRepository<ChatMessage> {
 
   protected toDomain(doc: Record<string, any>): ChatMessage {
     const { _id, ...rest } = doc;
-    return { ...rest, id: _id.toString() } as ChatMessage;
+    // Use id field if present, otherwise fall back to _id for backward compatibility
+    const id = rest.id || _id?.toString();
+    return { ...rest, id } as ChatMessage;
   }
 
   /**

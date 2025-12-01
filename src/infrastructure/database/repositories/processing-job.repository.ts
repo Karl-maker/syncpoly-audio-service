@@ -5,13 +5,13 @@ import { MongoDBRepository } from "../mongodb.repository";
 export class ProcessingJobRepository extends MongoDBRepository<ProcessingJob> {
   constructor(db: Db) {
     super(db, "processingJobs");
-    // Create indexes for efficient queries
-    this.ensureIndexes();
+    // Create additional indexes for efficient queries
+    this.ensureAdditionalIndexes();
   }
 
-  private async ensureIndexes(): Promise<void> {
+  private async ensureAdditionalIndexes(): Promise<void> {
     try {
-      // Index on userId for fast filtering
+      // Index on userId for fast filtering (base class already creates id index)
       await this.collection.createIndex({ userId: 1 });
       // Index on audioFileId for fast filtering
       await this.collection.createIndex({ audioFileId: 1 });

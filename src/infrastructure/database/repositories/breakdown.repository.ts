@@ -9,9 +9,11 @@ export class BreakdownRepository extends MongoDBRepository<Breakdown> {
 
   protected toDomain(doc: Record<string, any>): Breakdown {
     const { _id, ...rest } = doc;
+    // Use id field if present, otherwise fall back to _id for backward compatibility
+    const id = rest.id || _id?.toString();
     return {
       ...rest,
-      id: _id.toString(),
+      id,
       // Backward compatibility: default orderIndex to 0 if not present
       orderIndex: rest.orderIndex !== undefined ? rest.orderIndex : 0,
     } as Breakdown;

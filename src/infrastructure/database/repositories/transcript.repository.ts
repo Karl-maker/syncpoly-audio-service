@@ -1,4 +1,5 @@
 import { Db } from "mongodb";
+import { randomUUID } from "crypto";
 import { Transcript } from "../../../domain/entities/transcript";
 import { MongoDBRepository } from "../mongodb.repository";
 
@@ -9,9 +10,11 @@ export class TranscriptRepository extends MongoDBRepository<Transcript> {
 
   protected toDomain(doc: Record<string, any>): Transcript {
     const { _id, updatedAt, ...rest } = doc; // Remove updatedAt as Transcript doesn't have it
+    // Use id field if present, otherwise fall back to _id for backward compatibility
+    const id = rest.id || _id?.toString();
     return {
       ...rest,
-      id: _id.toString(),
+      id,
       // Backward compatibility: default orderIndex to 0 if not present
       orderIndex: rest.orderIndex !== undefined ? rest.orderIndex : 0,
       createdAt: rest.createdAt instanceof Date ? rest.createdAt : new Date(rest.createdAt),
@@ -32,13 +35,16 @@ export class TranscriptRepository extends MongoDBRepository<Transcript> {
   // Override create to handle Transcript without updatedAt
   async create(entity: Omit<Transcript, "id" | "createdAt">): Promise<Transcript> {
     const now = new Date();
+    // Generate UUID for id field
+    const id = randomUUID();
     const doc: Record<string, any> = {
       ...this.toMongo(entity),
+      id, // Store UUID in id field
       createdAt: now,
       updatedAt: now, // Store in DB but not in domain entity
     };
-    const result = await this.collection.insertOne(doc);
-    return this.toDomain({ ...doc, _id: result.insertedId } as Record<string, any>);
+    await this.collection.insertOne(doc);
+    return this.toDomain(doc);
   }
 
   async findByAudioSourceId(audioSourceId: string): Promise<Transcript[]> {

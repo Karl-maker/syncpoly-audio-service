@@ -5,6 +5,7 @@ import { UploadAudioUseCase } from "../../application/use-cases/upload-audio.use
 import { ProcessAudioUseCase } from "../../application/use-cases/process-audio.use-case";
 import { GetMemoryUsageUseCase } from "../../application/use-cases/get-memory-usage.use-case";
 import { GetUploadProgressUseCase } from "../../application/use-cases/get-upload-progress.use-case";
+import { GetProcessingProgressUseCase } from "../../application/use-cases/get-processing-progress.use-case";
 import { GetTranscriptUseCase } from "../../application/use-cases/get-transcript.use-case";
 import { GenerateBreakdownUseCase } from "../../application/use-cases/generate-breakdown.use-case";
 import { CreateBreakdownUseCase } from "../../application/use-cases/create-breakdown.use-case";
@@ -17,6 +18,7 @@ import { UploadAudioResponse } from "../dto/upload-audio.dto";
 import { ProcessAudioRequest, ProcessAudioResponse } from "../dto/process-audio.dto";
 import { MemoryUsageResponse } from "../dto/memory-usage.dto";
 import { UploadProgressResponse } from "../dto/upload-progress.dto";
+import { ProcessingProgressResponse } from "../dto/processing-progress.dto";
 import { TranscriptResponse, toTranscriptResponse } from "../dto/transcript.dto";
 import { BreakdownResponse, toBreakdownResponse, CreateBreakdownRequest, UpdateBreakdownRequest } from "../dto/breakdown.dto";
 
@@ -26,6 +28,7 @@ export class AudioController {
     private processAudioUseCase: ProcessAudioUseCase,
     private getMemoryUsageUseCase: GetMemoryUsageUseCase,
     private getUploadProgressUseCase: GetUploadProgressUseCase,
+    private getProcessingProgressUseCase: GetProcessingProgressUseCase,
     private getTranscriptUseCase: GetTranscriptUseCase,
     private generateBreakdownUseCase: GenerateBreakdownUseCase,
     private createBreakdownUseCase: CreateBreakdownUseCase,
@@ -217,6 +220,53 @@ export class AudioController {
         return;
       }
       res.status(500).json({ error: error.message || "Failed to get upload progress" });
+    }
+  }
+
+  async getProcessingProgress(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const jobId = req.params.jobId;
+
+      if (!jobId) {
+        res.status(400).json({ error: "jobId is required" });
+        return;
+      }
+
+      const job = await this.getProcessingProgressUseCase.execute({
+        jobId,
+        userId: req.user.userId,
+      });
+
+      const response: ProcessingProgressResponse = {
+        jobId: job.id,
+        audioFileId: job.audioFileId,
+        status: job.status,
+        progress: job.progress,
+        transcriptId: job.transcriptId,
+        vectorStoreType: job.vectorStoreType,
+        error: job.error,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+      };
+
+      res.status(200).json(response);
+    } catch (error: any) {
+      if (error.message?.includes("not found")) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      if (error.message?.includes("Unauthorized")) {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      res.status(500).json({ error: error.message || "Failed to get processing progress" });
     }
   }
 

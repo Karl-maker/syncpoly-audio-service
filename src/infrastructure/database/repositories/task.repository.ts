@@ -9,9 +9,11 @@ export class TaskRepository extends MongoDBRepository<Task> {
 
   protected toDomain(doc: Record<string, any>): Task {
     const { _id, ...rest } = doc;
+    // Use id field if present, otherwise fall back to _id for backward compatibility
+    const id = rest.id || _id?.toString();
     return {
       ...rest,
-      id: _id.toString(),
+      id,
       dueDate: rest.dueDate ? new Date(rest.dueDate) : undefined,
     } as Task;
   }

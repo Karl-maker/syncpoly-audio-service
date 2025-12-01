@@ -9,9 +9,11 @@ export class QuestionRepository extends MongoDBRepository<Question> {
 
   protected toDomain(doc: Record<string, any>): Question {
     const { _id, ...rest } = doc;
+    // Use id field if present, otherwise fall back to _id for backward compatibility
+    const id = rest.id || _id?.toString();
     return {
       ...rest,
-      id: _id.toString(),
+      id,
     } as Question;
   }
 

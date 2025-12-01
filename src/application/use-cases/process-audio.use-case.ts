@@ -94,6 +94,7 @@ export class ProcessAudioUseCase {
       userId,
       idempotencyKey,
       status: "pending",
+      progress: 0,
       vectorStoreType,
       options: jobOptions,
     } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -115,9 +116,10 @@ export class ProcessAudioUseCase {
     s3Config?: ProcessAudioUseCaseParams["s3Config"]
   ): Promise<void> {
     try {
-      // Update job status
+      // Update job status and progress
       await this.processingJobRepository.update(job.id, {
         status: "processing",
+        progress: 0,
         startedAt: new Date(),
       });
 
@@ -182,8 +184,26 @@ export class ProcessAudioUseCase {
       console.log(`[ProcessAudio] Starting pipeline execution with ${steps.length} steps`);
       console.log(`[ProcessAudio] Audio source ID: ${audioSource.getId()}`);
 
-      // Run pipeline
+      // Calculate progress increments based on steps
+      const totalSteps = steps.length;
+      const progressPerStep = totalSteps > 0 ? 90 / totalSteps : 0; // 90% for steps, 10% for completion
+      let currentStep = 0;
+
+      // Update progress: 5% - starting
+      if (totalSteps > 0) {
+        await this.processingJobRepository.update(job.id, { progress: 5 });
+      }
+
+      // Run pipeline with progress tracking
       const result = await pipeline.run(context);
+      
+      // Update progress after pipeline completion
+      if (totalSteps > 0) {
+        currentStep = totalSteps;
+        await this.processingJobRepository.update(job.id, { 
+          progress: Math.min(5 + (currentStep * progressPerStep), 95) 
+        });
+      }
       
       console.log(`[ProcessAudio] Pipeline execution completed`);
       console.log(`[ProcessAudio] Result has transcript: ${!!result.transcript}`);
@@ -191,9 +211,10 @@ export class ProcessAudioUseCase {
 
       console.log(`[ProcessAudio] Pipeline completed. Transcript: ${result.transcript?.id}, Embeddings: ${result.embeddings?.length || 0}`);
 
-      // Update job with results
+      // Update job with results and complete progress
       await this.processingJobRepository.update(job.id, {
         status: "completed",
+        progress: 100,
         transcriptId: result.transcript?.id,
         completedAt: new Date(),
       });
@@ -202,11 +223,12 @@ export class ProcessAudioUseCase {
       console.error(`[ProcessAudio] Error stack:`, error.stack);
       await this.processingJobRepository.update(job.id, {
         status: "failed",
-        error: error.message || "Unknown error",
-        completedAt: new Date(),
-      });
-      throw error; // Re-throw to ensure error is visible
-    }
+            progress: 0, // Reset progress on error
+            error: error.message || "Unknown error",
+            completedAt: new Date(),
+          });
+          throw error; // Re-throw to ensure error is visible
+        }
   }
 }
 
