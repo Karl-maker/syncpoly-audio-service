@@ -1,0 +1,64 @@
+# Example docker-compose.yml for audio-service
+# Copy this to docker-compose.yml and update with your values
+
+version: '3.8'
+
+services:
+  audio-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: audio-service
+    ports:
+      - "3000:3000"
+    environment:
+      # Server
+      - PORT=3000
+      
+      # OpenAI
+      - OPENAI_API_KEY=your-openai-api-key
+      
+      # MongoDB
+      - MONGODB_URI=mongodb://mongodb:27017/audio-service
+      
+      # AWS S3 (optional)
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=your-access-key-id
+      - AWS_SECRET_ACCESS_KEY=your-secret-access-key
+      - AWS_S3_BUCKET=your-bucket-name
+      # Optional: For S3-compatible services
+      # - AWS_S3_ENDPOINT=https://s3.example.com
+      # - AWS_S3_FORCE_PATH_STYLE=true
+      # - CDN_URL=https://cdn.example.com
+      
+      # JWT (for authentication)
+      - JWT_SECRET=your-jwt-secret-key
+    volumes:
+      # Optional: Mount .env file if you prefer
+      # - ./.env:/app/.env:ro
+      # Optional: Mount for temporary video processing (if needed)
+      - /tmp:/tmp
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  mongodb:
+    image: mongo:7
+    container_name: audio-service-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_DATABASE=audio-service
+
+volumes:
+  mongodb_data:
+
