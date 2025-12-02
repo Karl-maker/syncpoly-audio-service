@@ -187,30 +187,43 @@ export class ChatUseCase {
       }
     }
 
-    // Store assistant response
+    // Extract structured objects (tasks and questions) from response
+    // We do this before saving the message so we can include the IDs
+    let taskIds: string[] = [];
+    let questionIds: string[] = [];
+    
+    try {
+      const extracted = await this.extractAndStoreStructuredObjects(fullResponse, userId, audioFileId);
+      taskIds = extracted.taskIds;
+      questionIds = extracted.questionIds;
+    } catch (error) {
+      console.error("[Chat] Error extracting structured objects:", error);
+      // Continue even if extraction fails - don't block the response
+    }
+
+    // Store assistant response with task and question IDs
     await this.chatMessageRepository.create({
       userId,
       audioFileId: audioFileId,
       role: "assistant",
       content: fullResponse,
-    });
-
-    // Extract structured objects (tasks and questions) from response
-    // This runs asynchronously and doesn't block the response
-    this.extractAndStoreStructuredObjects(fullResponse, userId, audioFileId).catch((error) => {
-      console.error("[Chat] Error extracting structured objects:", error);
-      // Don't throw - this is a non-critical operation
+      taskIds: taskIds.length > 0 ? taskIds : undefined,
+      questionIds: questionIds.length > 0 ? questionIds : undefined,
     });
   }
 
   /**
    * Extract and store tasks and questions from the response
+   * Returns the IDs of created tasks and questions
    */
   private async extractAndStoreStructuredObjects(
     responseText: string,
     userId: string,
     audioFileId?: string
-  ): Promise<void> {
+  ): Promise<{ taskIds: string[]; questionIds: string[] }> {
+    const taskIds: string[] = [];
+    const questionIds: string[] = [];
+
     try {
       const extracted = await this.extractionService.extractStructuredObjects(
         responseText,
@@ -222,7 +235,7 @@ export class ChatUseCase {
       if (extracted.tasks.length > 0) {
         console.log(`[Chat] Extracted ${extracted.tasks.length} task(s)`);
         for (const task of extracted.tasks) {
-          await this.taskRepository.create({
+          const createdTask = await this.taskRepository.create({
             userId: task.userId,
             audioFileId: task.audioFileId,
             description: task.description,
@@ -231,6 +244,7 @@ export class ChatUseCase {
             location: task.location,
             status: task.status,
           });
+          taskIds.push(createdTask.id);
         }
       }
 
@@ -238,7 +252,7 @@ export class ChatUseCase {
       if (extracted.questions.length > 0) {
         console.log(`[Chat] Extracted ${extracted.questions.length} question(s)`);
         for (const question of extracted.questions) {
-          await this.questionRepository.create({
+          const createdQuestion = await this.questionRepository.create({
             userId: question.userId,
             audioFileId: question.audioFileId,
             type: question.type,
@@ -247,12 +261,15 @@ export class ChatUseCase {
             correctAnswer: question.correctAnswer,
             explanation: question.explanation,
           });
+          questionIds.push(createdQuestion.id);
         }
       }
     } catch (error) {
       console.error("[Chat] Error in extractAndStoreStructuredObjects:", error);
-      // Silently fail - don't disrupt the chat flow
+      // Return what we have so far
     }
+
+    return { taskIds, questionIds };
   }
 
   /**

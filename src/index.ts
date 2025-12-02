@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import { config } from "./infrastructure/config/app.config";
 import { connectToMongoDB, getDb } from "./infrastructure/database/mongodb.connection";
 import { AudioFileRepository } from "./infrastructure/database/repositories/audio-file.repository";
@@ -46,9 +47,9 @@ async function main() {
     const processingJobRepository = new ProcessingJobRepository(db);
     const uploadJobRepository = new UploadJobRepository(db);
     const transcriptRepository = new TranscriptRepository(db);
-    const chatMessageRepository = new ChatMessageRepository(db);
     const taskRepository = new TaskRepository(db);
     const questionRepository = new QuestionRepository(db);
+    const chatMessageRepository = new ChatMessageRepository(db, taskRepository, questionRepository);
     const breakdownRepository = new BreakdownRepository(db);
 
     // Initialize infrastructure
@@ -163,12 +164,14 @@ async function main() {
       audioFileRepository,
       breakdownRepository
     );
-    const chatController = new ChatController(chatUseCase);
+    const chatController = new ChatController(chatUseCase, chatMessageRepository);
 
     // Initialize Express app
     const app = express();
 
     // Middleware
+    // Enable CORS for all origins
+    app.use(cors());
     app.use(express.json());
     app.use(express.urlencoded({ extended: true }));
 

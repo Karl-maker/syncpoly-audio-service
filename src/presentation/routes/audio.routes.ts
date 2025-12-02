@@ -87,6 +87,9 @@ export function createAudioRoutes(
   // Chat endpoint
   router.post("/chat", (req, res) => chatController.chat(req as any, res));
 
+  // Get chat messages by audio file ID
+  router.get("/:audioFileId/chat/messages", (req, res) => chatController.getMessagesByAudioId(req as any, res));
+
   return router;
 }
 

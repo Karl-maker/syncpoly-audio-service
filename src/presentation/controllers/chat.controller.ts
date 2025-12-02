@@ -1,9 +1,13 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../middleware/jwt.middleware";
 import { ChatUseCase } from "../../application/use-cases/chat.use-case";
+import { ChatMessageRepository } from "../../infrastructure/database/repositories/chat-message.repository";
 
 export class ChatController {
-  constructor(private chatUseCase: ChatUseCase) {}
+  constructor(
+    private chatUseCase: ChatUseCase,
+    private chatMessageRepository: ChatMessageRepository
+  ) {}
 
   async chat(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
@@ -80,6 +84,38 @@ export class ChatController {
       if (!res.headersSent) {
         res.status(500).json({ error: error.message || "Failed to process chat request" });
       }
+    }
+  }
+
+  async getMessagesByAudioId(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { audioFileId } = req.params;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 100;
+
+      if (!audioFileId) {
+        res.status(400).json({ error: "audioFileId is required" });
+        return;
+      }
+
+      if (isNaN(limit) || limit < 1 || limit > 1000) {
+        res.status(400).json({ error: "limit must be a number between 1 and 1000" });
+        return;
+      }
+
+      const messages = await this.chatMessageRepository.getMessagesByAudioFileId(
+        req.user.userId,
+        audioFileId,
+        limit
+      );
+
+      res.json({ messages });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to retrieve chat messages" });
     }
   }
 }
