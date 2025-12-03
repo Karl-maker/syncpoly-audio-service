@@ -43,6 +43,9 @@ export function createAudioRoutes(
   // All routes require authentication
   router.use(jwtMiddleware);
 
+  // Get all audio files for the authenticated user
+  router.get("/", (req, res) => audioController.getAudioFiles(req as any, res));
+
   // Upload audio file
   router.post(
     "/upload",

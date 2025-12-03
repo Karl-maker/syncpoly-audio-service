@@ -590,5 +590,23 @@ export class AudioController {
       res.status(500).json({ error: error.message || "Failed to delete breakdown" });
     }
   }
+
+  async getAudioFiles(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const audioFiles = await this.audioFileRepository.findByUserId(req.user.userId);
+
+      res.status(200).json({ 
+        audioFiles,
+        count: audioFiles.length 
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get audio files" });
+    }
+  }
 }
 
