@@ -1,4 +1,9 @@
-import { Transcript } from "../../domain/entities/transcript";
+import { Transcript, Speaker, TranscriptSegment } from "../../domain/entities/transcript";
+
+export interface UpdateTranscriptRequest {
+  speakers?: Speaker[];
+  segments?: TranscriptSegment[];
+}
 
 export interface TranscriptResponse {
   id: string;

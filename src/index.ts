@@ -18,6 +18,7 @@ import { GetMemoryUsageUseCase } from "./application/use-cases/get-memory-usage.
 import { GetUploadProgressUseCase } from "./application/use-cases/get-upload-progress.use-case";
 import { GetProcessingProgressUseCase } from "./application/use-cases/get-processing-progress.use-case";
 import { GetTranscriptUseCase } from "./application/use-cases/get-transcript.use-case";
+import { UpdateTranscriptUseCase } from "./application/use-cases/update-transcript.use-case";
 import { GenerateBreakdownUseCase } from "./application/use-cases/generate-breakdown.use-case";
 import { CreateBreakdownUseCase } from "./application/use-cases/create-breakdown.use-case";
 import { UpdateBreakdownUseCase } from "./application/use-cases/update-breakdown.use-case";
@@ -114,6 +115,10 @@ async function main() {
       transcriptRepository,
       audioFileRepository
     );
+    const updateTranscriptUseCase = new UpdateTranscriptUseCase(
+      transcriptRepository,
+      audioFileRepository
+    );
     const generateBreakdownUseCase = new GenerateBreakdownUseCase(
       audioFileRepository,
       breakdownRepository,
@@ -156,6 +161,7 @@ async function main() {
       getUploadProgressUseCase,
       getProcessingProgressUseCase,
       getTranscriptUseCase,
+      updateTranscriptUseCase,
       generateBreakdownUseCase,
       createBreakdownUseCase,
       updateBreakdownUseCase,

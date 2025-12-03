@@ -8,6 +8,7 @@ import { GetMemoryUsageUseCase } from "../../application/use-cases/get-memory-us
 import { GetUploadProgressUseCase } from "../../application/use-cases/get-upload-progress.use-case";
 import { GetProcessingProgressUseCase } from "../../application/use-cases/get-processing-progress.use-case";
 import { GetTranscriptUseCase } from "../../application/use-cases/get-transcript.use-case";
+import { UpdateTranscriptUseCase } from "../../application/use-cases/update-transcript.use-case";
 import { GenerateBreakdownUseCase } from "../../application/use-cases/generate-breakdown.use-case";
 import { CreateBreakdownUseCase } from "../../application/use-cases/create-breakdown.use-case";
 import { UpdateBreakdownUseCase } from "../../application/use-cases/update-breakdown.use-case";
@@ -20,7 +21,7 @@ import { ProcessAudioRequest, ProcessAudioResponse } from "../dto/process-audio.
 import { MemoryUsageResponse } from "../dto/memory-usage.dto";
 import { UploadProgressResponse } from "../dto/upload-progress.dto";
 import { ProcessingProgressResponse } from "../dto/processing-progress.dto";
-import { TranscriptResponse, toTranscriptResponse } from "../dto/transcript.dto";
+import { TranscriptResponse, toTranscriptResponse, UpdateTranscriptRequest } from "../dto/transcript.dto";
 import { BreakdownResponse, toBreakdownResponse, CreateBreakdownRequest, UpdateBreakdownRequest } from "../dto/breakdown.dto";
 
 export class AudioController {
@@ -32,6 +33,7 @@ export class AudioController {
     private getUploadProgressUseCase: GetUploadProgressUseCase,
     private getProcessingProgressUseCase: GetProcessingProgressUseCase,
     private getTranscriptUseCase: GetTranscriptUseCase,
+    private updateTranscriptUseCase: UpdateTranscriptUseCase,
     private generateBreakdownUseCase: GenerateBreakdownUseCase,
     private createBreakdownUseCase: CreateBreakdownUseCase,
     private updateBreakdownUseCase: UpdateBreakdownUseCase,
@@ -365,6 +367,48 @@ export class AudioController {
         return;
       }
       res.status(500).json({ error: error.message || "Failed to get transcript" });
+    }
+  }
+
+  async updateTranscript(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const transcriptId = req.params.transcriptId;
+      const { speakers, segments } = req.body as UpdateTranscriptRequest;
+
+      if (!transcriptId) {
+        res.status(400).json({ error: "transcriptId is required" });
+        return;
+      }
+
+      if (!speakers && !segments) {
+        res.status(400).json({ error: "At least one of 'speakers' or 'segments' must be provided" });
+        return;
+      }
+
+      const transcript = await this.updateTranscriptUseCase.execute({
+        transcriptId,
+        userId: req.user.userId,
+        speakers,
+        segments,
+      });
+
+      const response: TranscriptResponse = toTranscriptResponse(transcript);
+      res.status(200).json(response);
+    } catch (error: any) {
+      if (error.message?.includes("not found")) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      if (error.message?.includes("Unauthorized")) {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      res.status(500).json({ error: error.message || "Failed to update transcript" });
     }
   }
 

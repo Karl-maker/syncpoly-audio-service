@@ -75,6 +75,9 @@ export function createAudioRoutes(
   // Get transcript for an audio file
   router.get("/:audioFileId/transcript", (req, res) => audioController.getTranscript(req as any, res));
 
+  // Update transcript by transcript ID
+  router.patch("/transcript/:transcriptId", (req, res) => audioController.updateTranscript(req as any, res));
+
   // Generate breakdown for an audio file (all chunks or specific orderIndex)
   router.post("/:audioFileId/breakdown/generate", (req, res) => audioController.generateBreakdown(req as any, res));
 
