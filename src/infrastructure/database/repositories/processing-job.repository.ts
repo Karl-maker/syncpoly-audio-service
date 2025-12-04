@@ -66,5 +66,145 @@ export class ProcessingJobRepository extends MongoDBRepository<ProcessingJob> {
     
     return docs.map((doc: Record<string, any>) => this.toDomain(doc));
   }
+
+  /**
+   * Acquire a lock on a processing job to prevent duplicate processing.
+   * Returns true if lock was acquired, false if already locked (and not stale).
+   * @param jobId The job ID to lock
+   * @param lockedBy Identifier for what's acquiring the lock (e.g., process ID)
+   * @param lockTimeoutMs Lock timeout in milliseconds (default: 5 minutes)
+   * @returns true if lock was acquired, false if already locked
+   */
+  async acquireLock(jobId: string, lockedBy: string, lockTimeoutMs: number = 5 * 60 * 1000): Promise<boolean> {
+    const job = await this.findById(jobId);
+    if (!job) {
+      throw new Error(`Job ${jobId} not found`);
+    }
+
+    // Check if job is already locked
+    if (job.lockedAt && job.lockedBy) {
+      // Check if lock is stale (expired)
+      const lockAge = Date.now() - job.lockedAt.getTime();
+      const timeout = job.lockTimeout || lockTimeoutMs;
+      
+      if (lockAge < timeout) {
+        // Lock is still valid, cannot acquire
+        console.log(`[ProcessingJobRepository] Job ${jobId} is locked by ${job.lockedBy} (age: ${lockAge}ms, timeout: ${timeout}ms)`);
+        return false;
+      } else {
+        // Lock is stale, release it first
+        console.log(`[ProcessingJobRepository] Job ${jobId} has stale lock (age: ${lockAge}ms > timeout: ${timeout}ms), releasing...`);
+        await this.releaseLock(jobId);
+      }
+    }
+
+    // Acquire the lock
+    const now = new Date();
+    await this.update(jobId, {
+      lockedAt: now,
+      lockedBy,
+      lockTimeout: lockTimeoutMs,
+    } as Partial<ProcessingJob>);
+
+    console.log(`[ProcessingJobRepository] Lock acquired on job ${jobId} by ${lockedBy}`);
+    return true;
+  }
+
+  /**
+   * Release a lock on a processing job.
+   * @param jobId The job ID to unlock
+   */
+  async releaseLock(jobId: string): Promise<void> {
+    // Use $unset to properly remove lock fields from MongoDB
+    await this.collection.findOneAndUpdate(
+      { id: jobId },
+      {
+        $unset: {
+          lockedAt: "",
+          lockedBy: "",
+          lockTimeout: "",
+        },
+        $set: {
+          updatedAt: new Date(),
+        },
+      }
+    );
+    console.log(`[ProcessingJobRepository] Lock released on job ${jobId}`);
+  }
+
+  /**
+   * Check if a job is currently locked.
+   * @param jobId The job ID to check
+   * @returns true if locked and not stale, false otherwise
+   */
+  async isLocked(jobId: string): Promise<boolean> {
+    const job = await this.findById(jobId);
+    if (!job || !job.lockedAt || !job.lockedBy) {
+      return false;
+    }
+
+    // Check if lock is stale
+    const lockAge = Date.now() - job.lockedAt.getTime();
+    const timeout = job.lockTimeout || 5 * 60 * 1000;
+    
+    if (lockAge >= timeout) {
+      // Lock is stale, consider it unlocked
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Find incomplete jobs that are not locked (or have stale locks).
+   * These are jobs that are pending, processing, or failed and can be retried.
+   * @param limit Maximum number of jobs to return
+   * @returns Array of incomplete, unlockable jobs
+   */
+  async findIncompleteUnlockedJobs(limit: number = 50): Promise<ProcessingJob[]> {
+    const defaultLockTimeout = 30 * 60 * 1000; // 5 minutes
+    const staleLockThreshold = new Date(Date.now() - defaultLockTimeout);
+
+    // Find jobs that are incomplete (pending, processing, or failed)
+    // and either not locked, or have stale locks
+    const docs = await this.collection
+      .find({
+        status: { $in: ["pending", "processing", "failed"] },
+        $or: [
+          // Not locked at all
+          { lockedAt: { $exists: false } },
+          { lockedAt: null },
+          // Lock is stale (older than default timeout)
+          // Note: We check against default timeout here, actual timeout per job is checked in acquireLock
+          { lockedAt: { $lt: staleLockThreshold } }
+        ]
+      })
+      .sort({ updatedAt: 1 }) // Process oldest first
+      .limit(limit)
+      .toArray();
+
+    // Filter out jobs that are actually locked (with non-stale locks)
+    // and check retry limits
+    const jobs = docs.map((doc: Record<string, any>) => this.toDomain(doc));
+    const unlockedJobs: ProcessingJob[] = [];
+
+    for (const job of jobs) {
+      // Double-check lock status (handles per-job timeout)
+      const isLocked = await this.isLocked(job.id);
+      if (!isLocked) {
+        // Check retry limit
+        const retryCount = job.retryCount || 0;
+        const maxRetries = job.maxRetries || 5;
+        
+        if (retryCount < maxRetries) {
+          unlockedJobs.push(job);
+        } else {
+          console.log(`[ProcessingJobRepository] Job ${job.id} has exceeded max retries (${retryCount}/${maxRetries}), skipping`);
+        }
+      }
+    }
+
+    return unlockedJobs;
+  }
 }
 

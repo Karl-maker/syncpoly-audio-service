@@ -17,6 +17,7 @@ import { UploadVideoUseCase } from "./application/use-cases/upload-video.use-cas
 import { ProcessAudioUseCase } from "./application/use-cases/process-audio.use-case";
 import { GetMemoryUsageUseCase } from "./application/use-cases/get-memory-usage.use-case";
 import { GetUploadProgressUseCase } from "./application/use-cases/get-upload-progress.use-case";
+import { GetIncompleteUploadJobsUseCase } from "./application/use-cases/get-incomplete-upload-jobs.use-case";
 import { GetProcessingProgressUseCase } from "./application/use-cases/get-processing-progress.use-case";
 import { GetProcessingJobsUseCase } from "./application/use-cases/get-processing-jobs.use-case";
 import { GetTranscriptUseCase } from "./application/use-cases/get-transcript.use-case";
@@ -31,6 +32,8 @@ import { CreateCustomerUseCase } from "./application/use-cases/create-customer.u
 import { GetCustomerUseCase } from "./application/use-cases/get-customer.use-case";
 import { UpdateCustomerUseCase } from "./application/use-cases/update-customer.use-case";
 import { DeactivateCustomerUseCase } from "./application/use-cases/deactivate-customer.use-case";
+import { ResumeIncompleteJobsUseCase } from "./application/use-cases/resume-incomplete-jobs.use-case";
+import { JobRecoveryCron } from "./infrastructure/cron/job-recovery.cron";
 import { AudioController } from "./presentation/controllers/audio.controller";
 import { ChatController } from "./presentation/controllers/chat.controller";
 import { CustomerController } from "./presentation/controllers/customer.controller";
@@ -126,6 +129,7 @@ async function main() {
       transcriptRepository
     );
     const getUploadProgressUseCase = new GetUploadProgressUseCase(uploadJobRepository);
+    const getIncompleteUploadJobsUseCase = new GetIncompleteUploadJobsUseCase(uploadJobRepository);
     const getProcessingProgressUseCase = new GetProcessingProgressUseCase(processingJobRepository);
     const getProcessingJobsUseCase = new GetProcessingJobsUseCase(processingJobRepository);
     const getTranscriptUseCase = new GetTranscriptUseCase(
@@ -161,6 +165,15 @@ async function main() {
     const getCustomerUseCase = new GetCustomerUseCase(customerRepository);
     const updateCustomerUseCase = new UpdateCustomerUseCase(customerRepository);
     const deactivateCustomerUseCase = new DeactivateCustomerUseCase(customerRepository);
+    // Set processing job repository on upload job repository for cross-collection queries
+    uploadJobRepository.setProcessingJobRepository(processingJobRepository);
+
+    const resumeIncompleteJobsUseCase = new ResumeIncompleteJobsUseCase(
+      processingJobRepository,
+      audioFileRepository,
+      uploadJobRepository,
+      processAudioUseCase
+    );
 
     // Initialize chat use case
     const chatUseCase = new ChatUseCase(
@@ -181,6 +194,7 @@ async function main() {
       getMemoryUsageUseCase,
       calculateUsagePeriodUseCase,
       getUploadProgressUseCase,
+      getIncompleteUploadJobsUseCase,
       getProcessingProgressUseCase,
       getProcessingJobsUseCase,
       getTranscriptUseCase,
@@ -227,12 +241,19 @@ async function main() {
       });
     });
 
+    // Initialize and start cron job for job recovery
+    const jobRecoveryCron = new JobRecoveryCron(resumeIncompleteJobsUseCase);
+    jobRecoveryCron.start();
+
     // Start server
     app.listen(config.port, () => {
       console.log(`Audio service running on port ${config.port}`);
       console.log(`Health check: http://localhost:${config.port}/health`);
       console.log(`API endpoints: http://localhost:${config.port}/api/audio`);
     });
+
+    // Store cron reference for graceful shutdown
+    (global as any).jobRecoveryCron = jobRecoveryCron;
   } catch (error) {
     console.error("Failed to start server:", error);
     process.exit(1);
@@ -242,6 +263,9 @@ async function main() {
 // Handle graceful shutdown
 process.on("SIGTERM", async () => {
   console.log("SIGTERM received, shutting down gracefully");
+  if ((global as any).jobRecoveryCron) {
+    (global as any).jobRecoveryCron.stop();
+  }
   const { closeMongoDBConnection } = await import("./infrastructure/database/mongodb.connection");
   await closeMongoDBConnection();
   process.exit(0);
@@ -249,6 +273,9 @@ process.on("SIGTERM", async () => {
 
 process.on("SIGINT", async () => {
   console.log("SIGINT received, shutting down gracefully");
+  if ((global as any).jobRecoveryCron) {
+    (global as any).jobRecoveryCron.stop();
+  }
   const { closeMongoDBConnection } = await import("./infrastructure/database/mongodb.connection");
   await closeMongoDBConnection();
   process.exit(0);

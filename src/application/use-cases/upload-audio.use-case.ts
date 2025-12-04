@@ -65,6 +65,7 @@ export class UploadAudioUseCase {
       let s3BucketName: string | undefined;
       let s3Key: string | undefined;
       let parts: AudioFilePart[] | undefined;
+      let totalDuration: number | undefined;
       const audioSourceProvider: AudioSourceProvidersType = "s3";
 
       // Check if file should be chunked
@@ -91,6 +92,12 @@ export class UploadAudioUseCase {
           );
 
           console.log(`[UploadAudio] Chunked into ${chunks.length} parts`);
+
+          // Calculate total duration from chunks (last chunk's endTimeSec)
+          totalDuration = chunks.length > 0 ? chunks[chunks.length - 1].endTimeSec : undefined;
+          if (totalDuration) {
+            console.log(`[UploadAudio] Total duration: ${totalDuration.toFixed(2)} seconds`);
+          }
 
           // Upload each 10MB chunk as a separate S3 object
           // Each part is stored independently in S3 for direct processing later
@@ -152,6 +159,31 @@ export class UploadAudioUseCase {
           console.log(`[UploadAudio] Uploaded ${parts.length} parts`);
         } else {
           // Single file upload (backward compatible)
+          // Get duration for single file using ffprobe
+          try {
+            const { exec } = await import("child_process");
+            const { promisify } = await import("util");
+            const { writeFile, unlink } = await import("fs/promises");
+            const { join } = await import("path");
+            const { tmpdir } = await import("os");
+            const execAsync = promisify(exec);
+            
+            const tempDir = tmpdir();
+            const tempFile = join(tempDir, `${randomUUID()}-audio`);
+            await writeFile(tempFile, file.buffer);
+            
+            const probeCmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${tempFile}"`;
+            const { stdout } = await execAsync(probeCmd);
+            totalDuration = parseFloat(stdout.trim()) || undefined;
+            
+            await unlink(tempFile).catch(() => {});
+            if (totalDuration) {
+              console.log(`[UploadAudio] Single file duration: ${totalDuration.toFixed(2)} seconds`);
+            }
+          } catch (error) {
+            console.warn(`[UploadAudio] Could not determine duration for single file:`, error);
+          }
+
           const { Readable } = await import("stream");
           const fileStream = Readable.from(file.buffer);
           const key = `users/${userId}/${randomUUID()}-${file.originalname}`;
@@ -204,6 +236,7 @@ export class UploadAudioUseCase {
         cdnUrl: generatedCdnUrl, // CDN URL for first part or single file
         audioSourceProvider,
         fileSize: file.size,
+        duration: totalDuration,
         mimeType: file.mimetype,
         uploadedAt: now,
       } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);

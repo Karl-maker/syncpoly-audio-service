@@ -13,6 +13,12 @@ export interface ProcessingJob {
   completedAt?: Date;
   processedParts?: number[]; // Array of part indices that have been successfully processed
   lastProcessedPartIndex?: number; // Last part index that was processed (for resuming)
+  lockedAt?: Date; // When the lock was acquired
+  lockedBy?: string; // Identifier for what's holding the lock (process ID, instance ID, etc.)
+  lockTimeout?: number; // Lock timeout in milliseconds (default: 5 minutes)
+  retryCount?: number; // Number of retry attempts
+  maxRetries?: number; // Maximum number of retries allowed (default: 5)
+  lastRetryAt?: Date; // When the last retry was attempted
   createdAt: Date;
   updatedAt: Date;
 }

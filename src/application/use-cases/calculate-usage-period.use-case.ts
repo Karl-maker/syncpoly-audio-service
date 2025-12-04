@@ -70,24 +70,39 @@ export class CalculateUsagePeriodUseCase {
         continue;
       }
 
-      // Get transcripts for this audio file
-      const transcripts = await this.transcriptRepository.findByAudioFileId(job.audioFileId);
-
-      // Calculate total audio duration from transcripts
+      // Calculate total audio duration
+      // Priority: 1) Use audioFile.duration (most accurate - stores total duration for chunked files), 
+      //           2) Use max transcript duration (for single files), 3) Estimate from file size
       let audioProcessedSeconds = 0;
-      for (const transcript of transcripts) {
-        if (transcript.segments && transcript.segments.length > 0) {
-          const lastSegment = transcript.segments[transcript.segments.length - 1];
-          const transcriptDuration = lastSegment.endTimeSec;
-          audioProcessedSeconds = Math.max(audioProcessedSeconds, transcriptDuration);
+      
+      if (audioFile.duration && audioFile.duration > 0) {
+        // Use the actual duration from the audio file (most accurate)
+        // This is the total duration including all chunks
+        audioProcessedSeconds = audioFile.duration;
+      } else {
+        // Fallback: Calculate from transcripts
+        const transcripts = await this.transcriptRepository.findByAudioFileId(job.audioFileId);
+        
+        if (transcripts.length > 0) {
+          // Find the maximum endTimeSec from all transcripts
+          // Note: For chunked files, each transcript's endTimeSec is relative to that chunk,
+          // so we can't simply sum them. Using max is an approximation.
+          // The audioFile.duration field should be used for accurate results.
+          for (const transcript of transcripts) {
+            if (transcript.segments && transcript.segments.length > 0) {
+              const lastSegment = transcript.segments[transcript.segments.length - 1];
+              const transcriptDuration = lastSegment.endTimeSec;
+              audioProcessedSeconds = Math.max(audioProcessedSeconds, transcriptDuration);
+            }
+          }
         }
-      }
-
-      // If no transcripts, estimate from file size (rough estimate: 1MB ≈ 1 minute at 128kbps)
-      if (audioProcessedSeconds === 0 && audioFile.fileSize > 0) {
-        // Estimate: assume 128kbps bitrate
-        const bitrateBps = 128 * 1000;
-        audioProcessedSeconds = (audioFile.fileSize * 8) / bitrateBps;
+        
+        // If still no duration, estimate from file size (rough estimate: 1MB ≈ 1 minute at 128kbps)
+        if (audioProcessedSeconds === 0 && audioFile.fileSize > 0) {
+          // Estimate: assume 128kbps bitrate
+          const bitrateBps = 128 * 1000;
+          audioProcessedSeconds = (audioFile.fileSize * 8) / bitrateBps;
+        }
       }
 
       // Calculate credits used (OpenAI pricing)

@@ -15,6 +15,8 @@ import { TranscriptRepository } from "../../infrastructure/database/repositories
 import { AudioChunkingService } from "../../infrastructure/audio/audio-chunking.service";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { Readable } from "stream";
+import { hostname } from "os";
+import { createHash } from "crypto";
 
 export interface ProcessAudioUseCaseParams {
   audioFileId: string;
@@ -39,6 +41,8 @@ export interface ProcessAudioUseCaseParams {
 export class ProcessAudioUseCase {
   private chunkingService: AudioChunkingService;
   private readonly OPENAI_MAX_SIZE = 24 * 1024 * 1024; // 24MB (OpenAI's limit is 25MB)
+  private readonly LOCK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes default lock timeout
+  private readonly lockIdentifier: string; // Unique identifier for this process instance
 
   constructor(
     private audioFileRepository: AudioFileRepository,
@@ -50,6 +54,45 @@ export class ProcessAudioUseCase {
     private openaiVectorStore: IVectorStore
   ) {
     this.chunkingService = new AudioChunkingService();
+    // Generate unique lock identifier: hostname + process ID
+    this.lockIdentifier = `${hostname()}-${process.pid}`;
+    
+    // Set up process termination handlers to release locks on shutdown
+    this.setupProcessTerminationHandlers();
+  }
+
+  /**
+   * Generate a unique idempotency key from audioFileId and userId.
+   * This ensures uniqueness per audio file and user combination.
+   */
+  private generateIdempotencyKey(audioFileId: string, userId: string): string {
+    // Create a hash of audioFileId and userId to ensure uniqueness
+    const combined = `${audioFileId}-${userId}`;
+    const hash = createHash("sha256").update(combined).digest("hex").substring(0, 16);
+    return `audio-${audioFileId}-${hash}`;
+  }
+
+  /**
+   * Set up handlers to release locks when the process terminates
+   */
+  private setupProcessTerminationHandlers(): void {
+    const cleanup = async () => {
+      console.log(`[ProcessAudio] Process terminating, releasing all locks held by ${this.lockIdentifier}...`);
+      // Note: We can't easily track all locked jobs here, but stale locks will be automatically
+      // released when they expire (30 minutes). For immediate cleanup, we'd need a registry
+      // of locked jobs, which adds complexity. The timeout mechanism handles crashes gracefully.
+    };
+
+    process.on("SIGTERM", cleanup);
+    process.on("SIGINT", cleanup);
+    process.on("uncaughtException", (error) => {
+      console.error(`[ProcessAudio] Uncaught exception:`, error);
+      cleanup();
+    });
+    process.on("unhandledRejection", (reason, promise) => {
+      console.error(`[ProcessAudio] Unhandled rejection at:`, promise, `reason:`, reason);
+      cleanup();
+    });
   }
 
   async execute(params: ProcessAudioUseCaseParams): Promise<ProcessingJob> {
@@ -75,10 +118,19 @@ export class ProcessAudioUseCase {
       throw new Error("Unauthorized: Audio file does not belong to user");
     }
 
-    // Check for existing job for this audio file (idempotency)
+    // Generate idempotency key if not provided
+    // This ensures uniqueness per audio file and user, preventing duplicate key errors
+    const finalIdempotencyKey = idempotencyKey || this.generateIdempotencyKey(audioFileId, userId);
+
+    // Check for existing job by idempotency key first (uses unique index)
     // This ensures that processing the same audio file again will continue from where it left off
-    const existingJobs = await this.processingJobRepository.findByAudioFileId(audioFileId);
-    const existingJob = existingJobs.find(j => j.userId === userId);
+    let existingJob = await this.processingJobRepository.findByIdempotencyKey(finalIdempotencyKey, userId);
+    
+    // Fallback: if not found by idempotency key, check by audioFileId (for backward compatibility)
+    if (!existingJob) {
+      const existingJobs = await this.processingJobRepository.findByAudioFileId(audioFileId);
+      existingJob = existingJobs.find(j => j.userId === userId) || null;
+    }
     
     if (existingJob) {
       // If job is completed, return it immediately
@@ -87,13 +139,28 @@ export class ProcessAudioUseCase {
         return existingJob;
       }
       
-      // If job is processing or failed, resume from last position
+      // If job is processing or failed, try to acquire lock and resume
       // This allows continuing processing after failures or interruptions
       if (existingJob.status === "processing" || existingJob.status === "failed") {
         // Refresh job state from database to get latest processedParts and lastProcessedPartIndex
         const refreshedJob = await this.processingJobRepository.findById(existingJob.id);
         if (!refreshedJob) {
           throw new Error(`Job ${existingJob.id} not found`);
+        }
+        
+        // Try to acquire lock on the job
+        const lockAcquired = await this.processingJobRepository.acquireLock(
+          refreshedJob.id,
+          this.lockIdentifier,
+          this.LOCK_TIMEOUT_MS
+        );
+        
+        if (!lockAcquired) {
+          // Job is locked by another process, throw error
+          throw new Error(
+            `Audio file ${audioFileId} is currently being processed by another process. ` +
+            `Please wait for the current processing to complete or try again later.`
+          );
         }
         
         const lastPartIndex = refreshedJob.lastProcessedPartIndex ?? -1;
@@ -112,10 +179,13 @@ export class ProcessAudioUseCase {
         // Get audio file again to ensure we have latest data
         const latestAudioFile = await this.audioFileRepository.findById(audioFileId);
         if (!latestAudioFile) {
+          // Release lock before throwing
+          await this.processingJobRepository.releaseLock(refreshedJob.id);
           throw new Error(`Audio file not found: ${audioFileId}`);
         }
         
         // Resume processing with the refreshed job (contains latest state)
+        // Lock will be released in processAudioAsync's finally block
         this.processAudioAsync(refreshedJob, latestAudioFile, s3Config).catch((error) => {
           console.error(`[ProcessAudio] Processing job ${refreshedJob.id} failed:`, error);
           console.error(`[ProcessAudio] Error stack:`, error.stack);
@@ -134,25 +204,38 @@ export class ProcessAudioUseCase {
     };
     
     console.log(`[ProcessAudio] Creating new job with options:`, JSON.stringify(jobOptions));
-    if (idempotencyKey) {
-      console.log(`[ProcessAudio] Using idempotency key: ${idempotencyKey}`);
-    }
+    console.log(`[ProcessAudio] Using idempotency key: ${finalIdempotencyKey} (generated from audioFileId: ${audioFileId}, userId: ${userId})`);
     
     const job = await this.processingJobRepository.create({
       audioFileId,
       userId,
-      idempotencyKey,
+      idempotencyKey: finalIdempotencyKey,
       status: "pending",
       progress: 0,
       processedParts: [],
       lastProcessedPartIndex: -1,
       vectorStoreType,
       options: jobOptions,
+      retryCount: 0,
+      maxRetries: 5, // Default max retries
     } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
     
     console.log(`[ProcessAudio] Created job ${job.id} with options:`, JSON.stringify(job.options));
 
+    // Acquire lock on the new job before starting processing
+    const lockAcquired = await this.processingJobRepository.acquireLock(
+      job.id,
+      this.lockIdentifier,
+      this.LOCK_TIMEOUT_MS
+    );
+    
+    if (!lockAcquired) {
+      // This shouldn't happen for a new job, but handle it gracefully
+      throw new Error(`Failed to acquire lock on newly created job ${job.id}`);
+    }
+
     // Start processing asynchronously
+    // Lock will be released in processAudioAsync's finally block
     this.processAudioAsync(job, audioFile, s3Config).catch((error) => {
       console.error(`[ProcessAudio] Processing job ${job.id} failed:`, error);
       console.error(`[ProcessAudio] Error stack:`, error.stack);
@@ -166,6 +249,7 @@ export class ProcessAudioUseCase {
     audioFile: any,
     s3Config?: ProcessAudioUseCaseParams["s3Config"]
   ): Promise<void> {
+    // Ensure lock is released even if process crashes or terminates
     try {
       // Check if this is a resume (has processed parts or lastProcessedPartIndex >= 0)
       const isResume = (job.processedParts && job.processedParts.length > 0) || (job.lastProcessedPartIndex !== undefined && job.lastProcessedPartIndex >= 0);
@@ -519,7 +603,16 @@ export class ProcessAudioUseCase {
         completedAt: new Date(),
         // Keep progress and processedParts so we can resume
       });
-      throw error; // Re-throw to ensure error is visible
+      // Don't re-throw here - we want to release the lock in finally block
+    } finally {
+      // Always release the lock, even on error or premature termination
+      try {
+        await this.processingJobRepository.releaseLock(job.id);
+        console.log(`[ProcessAudio] Lock released for job ${job.id}`);
+      } catch (lockError: any) {
+        console.error(`[ProcessAudio] Error releasing lock for job ${job.id}:`, lockError);
+        // Don't throw - lock will expire automatically after timeout
+      }
     }
   }
 

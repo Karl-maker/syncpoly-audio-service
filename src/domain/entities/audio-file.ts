@@ -21,6 +21,7 @@ export interface AudioFile {
   cdnUrl?: string; // Optional CDN URL for playback (first part or combined)
   audioSourceProvider: AudioSourceProvidersType;
   fileSize: number; // Total file size in bytes (sum of all parts)
+  duration?: number; // Total duration in seconds (sum of all parts)
   mimeType: string;
   uploadedAt: Date;
   createdAt: Date;

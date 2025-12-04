@@ -6,6 +6,7 @@ import { UploadVideoUseCase } from "../../application/use-cases/upload-video.use
 import { ProcessAudioUseCase } from "../../application/use-cases/process-audio.use-case";
 import { GetMemoryUsageUseCase } from "../../application/use-cases/get-memory-usage.use-case";
 import { GetUploadProgressUseCase } from "../../application/use-cases/get-upload-progress.use-case";
+import { GetIncompleteUploadJobsUseCase } from "../../application/use-cases/get-incomplete-upload-jobs.use-case";
 import { GetProcessingProgressUseCase } from "../../application/use-cases/get-processing-progress.use-case";
 import { GetProcessingJobsUseCase } from "../../application/use-cases/get-processing-jobs.use-case";
 import { GetTranscriptUseCase } from "../../application/use-cases/get-transcript.use-case";
@@ -35,6 +36,7 @@ export class AudioController {
     private getMemoryUsageUseCase: GetMemoryUsageUseCase,
     private calculateUsagePeriodUseCase: CalculateUsagePeriodUseCase,
     private getUploadProgressUseCase: GetUploadProgressUseCase,
+    private getIncompleteUploadJobsUseCase: GetIncompleteUploadJobsUseCase,
     private getProcessingProgressUseCase: GetProcessingProgressUseCase,
     private getProcessingJobsUseCase: GetProcessingJobsUseCase,
     private getTranscriptUseCase: GetTranscriptUseCase,
@@ -338,6 +340,53 @@ export class AudioController {
         return;
       }
       res.status(500).json({ error: error.message || "Failed to get upload progress" });
+    }
+  }
+
+  async getIncompleteUploadJobs(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      // Get pagination parameters from query string
+      const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 5;
+
+      const result = await this.getIncompleteUploadJobsUseCase.execute({
+        userId: req.user.userId,
+        page,
+        limit,
+      });
+
+      const responses: UploadProgressResponse[] = result.jobs.map((job) => ({
+        jobId: job.id,
+        status: job.status,
+        progress: job.progress,
+        audioFileId: job.audioFileId,
+        filename: job.filename,
+        s3Bucket: job.s3Bucket,
+        s3Key: job.s3Key,
+        videoS3Bucket: job.videoS3Bucket,
+        videoS3Key: job.videoS3Key,
+        error: job.error,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt,
+        createdAt: job.createdAt,
+      }));
+
+      res.status(200).json({
+        jobs: responses,
+        pagination: {
+          total: result.total,
+          totalPages: result.totalPages,
+          currentPage: result.currentPage,
+          limit,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get incomplete upload jobs" });
     }
   }
 

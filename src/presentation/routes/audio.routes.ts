@@ -69,6 +69,10 @@ export function createAudioRoutes(
   // Calculate usage period (requires startDate and endDate query params)
   router.get("/usage/period", (req, res) => audioController.calculateUsagePeriod(req as any, res));
 
+  // Get incomplete upload jobs (paginated, default 5 per page)
+  // Must come before /upload/:jobId/progress to avoid route conflicts
+  router.get("/upload/jobs/incomplete", (req, res) => audioController.getIncompleteUploadJobs(req as any, res));
+
   // Get upload progress
   router.get("/upload/:jobId/progress", (req, res) => audioController.getUploadProgress(req as any, res));
 

@@ -136,6 +136,7 @@ export class UploadVideoUseCase {
 
       // Step 3: Upload MP3 to S3 (70-100% progress)
       let parts: AudioFilePart[] | undefined;
+      let totalDuration: number | undefined;
       const shouldChunk = this.chunkingService.shouldChunkFile(mp3Buffer.length, this.CHUNK_SIZE_THRESHOLD);
 
       if (this.s3Storage && s3Bucket) {
@@ -158,6 +159,12 @@ export class UploadVideoUseCase {
           );
 
           console.log(`[UploadVideo] Chunked MP3 into ${chunks.length} parts`);
+
+          // Calculate total duration from chunks (last chunk's endTimeSec)
+          totalDuration = chunks.length > 0 ? chunks[chunks.length - 1].endTimeSec : undefined;
+          if (totalDuration) {
+            console.log(`[UploadVideo] Total duration: ${totalDuration.toFixed(2)} seconds`);
+          }
 
           // Upload each 10MB chunk as a separate S3 object
           // Each part is stored independently in S3 for direct processing later
@@ -220,6 +227,31 @@ export class UploadVideoUseCase {
           console.log(`[UploadVideo] Uploaded ${parts.length} parts`);
         } else {
           // Single file upload (backward compatible)
+          // Get duration for single MP3 file using ffprobe
+          try {
+            const { exec } = await import("child_process");
+            const { promisify } = await import("util");
+            const { writeFile, unlink } = await import("fs/promises");
+            const { join } = await import("path");
+            const { tmpdir } = await import("os");
+            const execAsync = promisify(exec);
+            
+            const tempDir = tmpdir();
+            const tempFile = join(tempDir, `${randomUUID()}-mp3`);
+            await writeFile(tempFile, mp3Buffer);
+            
+            const probeCmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${tempFile}"`;
+            const { stdout } = await execAsync(probeCmd);
+            totalDuration = parseFloat(stdout.trim()) || undefined;
+            
+            await unlink(tempFile).catch(() => {});
+            if (totalDuration) {
+              console.log(`[UploadVideo] Single MP3 file duration: ${totalDuration.toFixed(2)} seconds`);
+            }
+          } catch (error) {
+            console.warn(`[UploadVideo] Could not determine duration for single MP3 file:`, error);
+          }
+
           const mp3Key = `users/${userId}/audio/${randomUUID()}-${file.originalname.replace(/\.[^/.]+$/, "")}.mp3`;
           const mp3Stream = Readable.from(mp3Buffer);
 
@@ -273,6 +305,7 @@ export class UploadVideoUseCase {
         cdnUrl: generatedCdnUrl, // CDN URL for first part or single file
         audioSourceProvider,
         fileSize: mp3Buffer.length,
+        duration: totalDuration,
         mimeType: "audio/mpeg",
         uploadedAt: now,
       } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
