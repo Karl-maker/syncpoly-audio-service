@@ -11,13 +11,13 @@ export class GetProcessingJobsUseCase {
   ) {}
 
   /**
-   * Get all processing jobs for a user that are currently processing
-   * (status: "pending" or "processing") and were created or started in the past day
+   * Get the last 10 processing jobs for a user in any status
+   * Sorted by createdAt descending (most recent first)
    */
   async execute(params: GetProcessingJobsUseCaseParams): Promise<ProcessingJob[]> {
     const { userId } = params;
 
-    const jobs = await this.processingJobRepository.findProcessingJobsInPastDay(userId);
+    const jobs = await this.processingJobRepository.findRecentJobsByUserId(userId, 10);
     
     return jobs;
   }

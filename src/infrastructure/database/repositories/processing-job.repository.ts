@@ -54,23 +54,14 @@ export class ProcessingJobRepository extends MongoDBRepository<ProcessingJob> {
   }
 
   /**
-   * Find all processing jobs for a user that are currently processing (status: "processing" or "pending")
-   * and were created or started in the past day
+   * Find the last 10 processing jobs for a user in any status
+   * Sorted by createdAt descending (most recent first)
    */
-  async findProcessingJobsInPastDay(userId: string): Promise<ProcessingJob[]> {
-    const oneDayAgo = new Date();
-    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
-
+  async findRecentJobsByUserId(userId: string, limit: number = 10): Promise<ProcessingJob[]> {
     const docs = await this.collection
-      .find({
-        userId,
-        status: { $in: ["pending", "processing"] },
-        $or: [
-          { createdAt: { $gte: oneDayAgo } },
-          { startedAt: { $gte: oneDayAgo } },
-        ],
-      })
+      .find({ userId })
       .sort({ createdAt: -1 })
+      .limit(limit)
       .toArray();
     
     return docs.map((doc: Record<string, any>) => this.toDomain(doc));
