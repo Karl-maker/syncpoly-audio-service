@@ -50,8 +50,16 @@ export class TranscriptionStep implements IAudioProcessingStep {
         try {
           const audioFileId = context.options?.audioFileId;
           
+          // Get the starting orderIndex for this audioFileId
+          let currentOrderIndex = 0;
+          if (audioFileId) {
+            currentOrderIndex = await this.transcriptRepository.getNextOrderIndex(audioFileId);
+            console.log(`[TranscriptionStep] Starting orderIndex for audioFileId ${audioFileId}: ${currentOrderIndex}`);
+          }
+          
           for (let i = 0; i < transcriptChunks.length; i++) {
             const chunk = transcriptChunks[i];
+            const orderIndex = currentOrderIndex + i;
             const savedTranscript = await this.transcriptRepository.create({
               audioFileId, // Link to audio file
               audioSourceId: chunk.audioSourceId,
@@ -59,10 +67,10 @@ export class TranscriptionStep implements IAudioProcessingStep {
               language: chunk.language,
               speakers: chunk.speakers,
               segments: chunk.segments,
-              orderIndex: i, // Set order index for sorting
+              orderIndex, // Increment orderIndex for each chunk
             } as Omit<Transcript, "id" | "createdAt">);
             savedTranscripts.push(savedTranscript);
-            console.log(`[TranscriptionStep] Saved transcript chunk ${i} to MongoDB with ID: ${savedTranscript.id}`);
+            console.log(`[TranscriptionStep] Saved transcript chunk ${i} to MongoDB with orderIndex ${orderIndex}, ID: ${savedTranscript.id}`);
           }
           
           // Use the first chunk as the main transcript for the context (for backward compatibility)

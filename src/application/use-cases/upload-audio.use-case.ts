@@ -1,10 +1,11 @@
 import { randomUUID } from "crypto";
-import { AudioFile } from "../../domain/entities/audio-file";
+import { AudioFile, AudioFilePart } from "../../domain/entities/audio-file";
 import { UploadJob } from "../../domain/entities/upload-job";
 import { AudioFileRepository } from "../../infrastructure/database/repositories/audio-file.repository";
 import { UploadJobRepository } from "../../infrastructure/database/repositories/upload-job.repository";
 import { S3AudioStorage, S3AudioStorageConfig } from "../../infrastructure/aws/s3.audio.storage";
 import { AudioSourceProvidersType } from "../../domain/enums/audio.source.provider";
+import { AudioChunkingService } from "../../infrastructure/audio/audio-chunking.service";
 
 export interface UploadAudioUseCaseParams {
   file: Express.Multer.File;
@@ -15,11 +16,16 @@ export interface UploadAudioUseCaseParams {
 }
 
 export class UploadAudioUseCase {
+  private chunkingService: AudioChunkingService;
+  private readonly CHUNK_SIZE_THRESHOLD = 10 * 1024 * 1024; // 10MB
+
   constructor(
     private audioFileRepository: AudioFileRepository,
     private uploadJobRepository: UploadJobRepository,
     private s3Storage?: S3AudioStorage
-  ) {}
+  ) {
+    this.chunkingService = new AudioChunkingService();
+  }
 
   async execute(params: UploadAudioUseCaseParams): Promise<UploadJob> {
     const { file, userId, s3Bucket } = params;
@@ -58,39 +64,124 @@ export class UploadAudioUseCase {
 
       let s3BucketName: string | undefined;
       let s3Key: string | undefined;
+      let parts: AudioFilePart[] | undefined;
       const audioSourceProvider: AudioSourceProvidersType = "s3";
+
+      // Check if file should be chunked
+      const shouldChunk = this.chunkingService.shouldChunkFile(file.size, this.CHUNK_SIZE_THRESHOLD);
 
       // Upload to S3 if storage is configured
       if (this.s3Storage && s3Bucket) {
-        const { Readable } = await import("stream");
-        const fileStream = Readable.from(file.buffer);
-        const key = `users/${userId}/${randomUUID()}-${file.originalname}`;
+        if (shouldChunk) {
+          console.log(`[UploadAudio] File size ${file.size} exceeds threshold, chunking into parts`);
+          
+          // Chunk the file into 10MB parts and store each as a separate S3 object
+          const chunks = await this.chunkingService.chunkAudioFile(
+            file.buffer,
+            file.mimetype,
+            {
+              chunkSizeBytes: 10 * 1024 * 1024, // 10MB chunks (well under OpenAI's 25MB limit)
+              onProgress: async (progress: number, partIndex: number) => {
+                // Chunking is 0-30% of total progress
+                await this.uploadJobRepository.update(uploadJob.id, {
+                  progress: Math.floor(progress * 0.3),
+                });
+              },
+            }
+          );
 
-        // Track progress during upload
-        const result = await this.s3Storage.storeAudio(
-          fileStream,
-          s3Bucket,
-          key,
-          {
-            contentType: file.mimetype,
-            metadata: {
-              userId,
-              originalFilename: file.originalname,
-            },
-            onProgress: async (progress: number) => {
-              // Update progress in database
-              await this.uploadJobRepository.update(uploadJob.id, {
-                progress,
-              });
-            },
+          console.log(`[UploadAudio] Chunked into ${chunks.length} parts`);
+
+          // Upload each 10MB chunk as a separate S3 object
+          // Each part is stored independently in S3 for direct processing later
+          const fileBaseKey = `users/${userId}/${randomUUID()}-${file.originalname}`;
+          parts = [];
+          const uploadProgressPerPart = 70 / chunks.length; // 70% for uploads (30% chunking, 70% upload)
+
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            // Each chunk gets its own unique S3 key: {baseKey}-part-{index}
+            const partKey = `${fileBaseKey}-part-${i}`;
+            const { Readable } = await import("stream");
+            const chunkStream = Readable.from(chunk.buffer);
+
+            // Store each chunk as a separate S3 object
+            const result = await this.s3Storage.storeAudio(
+              chunkStream,
+              s3Bucket,
+              partKey,
+              {
+                contentType: file.mimetype,
+                metadata: {
+                  userId,
+                  originalFilename: file.originalname,
+                  partIndex: i.toString(),
+                  totalParts: chunks.length.toString(),
+                },
+                onProgress: async (partProgress: number) => {
+                  // Upload progress for this part: 30% + (partProgress * uploadProgressPerPart)
+                  const totalProgress = 30 + (i * uploadProgressPerPart) + (partProgress * uploadProgressPerPart / 100);
+                  await this.uploadJobRepository.update(uploadJob.id, {
+                    progress: Math.min(Math.floor(totalProgress), 99),
+                  });
+                },
+              }
+            );
+
+            // Generate CDN URL for this part if CDN is configured
+            let partCdnUrl: string | undefined;
+            if (cdnUrl) {
+              const cdnBase = cdnUrl.replace(/\/$/, "");
+              partCdnUrl = `${cdnBase}/${result.bucket}/${result.key}`;
+            }
+
+            parts.push({
+              s3Key: result.key,
+              partIndex: i,
+              fileSize: chunk.buffer.length,
+              cdnUrl: partCdnUrl,
+            });
+
+            // Set bucket and first key for backward compatibility
+            if (i === 0) {
+              s3BucketName = result.bucket;
+              s3Key = result.key;
+            }
           }
-        );
 
-        s3BucketName = result.bucket;
-        s3Key = result.key;
+          console.log(`[UploadAudio] Uploaded ${parts.length} parts`);
+        } else {
+          // Single file upload (backward compatible)
+          const { Readable } = await import("stream");
+          const fileStream = Readable.from(file.buffer);
+          const key = `users/${userId}/${randomUUID()}-${file.originalname}`;
+
+          // Track progress during upload
+          const result = await this.s3Storage.storeAudio(
+            fileStream,
+            s3Bucket,
+            key,
+            {
+              contentType: file.mimetype,
+              metadata: {
+                userId,
+                originalFilename: file.originalname,
+              },
+              onProgress: async (progress: number) => {
+                // Update progress in database
+                await this.uploadJobRepository.update(uploadJob.id, {
+                  progress,
+                });
+              },
+            }
+          );
+
+          s3BucketName = result.bucket;
+          s3Key = result.key;
+        }
       }
 
-      // Generate CDN URL if CDN is configured
+      // Generate CDN URL if CDN is configured (for first part or single file)
       let generatedCdnUrl: string | undefined;
       if (cdnUrl && s3BucketName && s3Key) {
         // Remove trailing slash from CDN URL if present
@@ -107,8 +198,10 @@ export class UploadAudioUseCase {
         filename: file.originalname,
         originalFilename: file.originalname,
         s3Bucket: s3BucketName,
-        s3Key,
-        cdnUrl: generatedCdnUrl,
+        s3Key, // Backward compatibility: points to first part
+        parts, // Array of parts for chunked uploads
+        partCount: parts?.length,
+        cdnUrl: generatedCdnUrl, // CDN URL for first part or single file
         audioSourceProvider,
         fileSize: file.size,
         mimeType: file.mimetype,

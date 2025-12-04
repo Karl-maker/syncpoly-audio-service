@@ -1,11 +1,12 @@
 import { randomUUID } from "crypto";
-import { AudioFile } from "../../domain/entities/audio-file";
+import { AudioFile, AudioFilePart } from "../../domain/entities/audio-file";
 import { UploadJob } from "../../domain/entities/upload-job";
 import { AudioFileRepository } from "../../infrastructure/database/repositories/audio-file.repository";
 import { UploadJobRepository } from "../../infrastructure/database/repositories/upload-job.repository";
 import { S3AudioStorage, S3AudioStorageConfig } from "../../infrastructure/aws/s3.audio.storage";
 import { VideoConverterService } from "../../infrastructure/video/video-converter.service";
 import { AudioSourceProvidersType } from "../../domain/enums/audio.source.provider";
+import { AudioChunkingService } from "../../infrastructure/audio/audio-chunking.service";
 import { Readable } from "stream";
 
 export interface UploadVideoUseCaseParams {
@@ -18,6 +19,8 @@ export interface UploadVideoUseCaseParams {
 
 export class UploadVideoUseCase {
   private videoConverter: VideoConverterService;
+  private chunkingService: AudioChunkingService;
+  private readonly CHUNK_SIZE_THRESHOLD = 10 * 1024 * 1024; // 10MB
 
   constructor(
     private audioFileRepository: AudioFileRepository,
@@ -25,6 +28,7 @@ export class UploadVideoUseCase {
     private s3Storage?: S3AudioStorage
   ) {
     this.videoConverter = new VideoConverterService();
+    this.chunkingService = new AudioChunkingService();
   }
 
   async execute(params: UploadVideoUseCaseParams): Promise<UploadJob> {
@@ -131,37 +135,122 @@ export class UploadVideoUseCase {
       });
 
       // Step 3: Upload MP3 to S3 (70-100% progress)
+      let parts: AudioFilePart[] | undefined;
+      const shouldChunk = this.chunkingService.shouldChunkFile(mp3Buffer.length, this.CHUNK_SIZE_THRESHOLD);
+
       if (this.s3Storage && s3Bucket) {
-        const mp3Key = `users/${userId}/audio/${randomUUID()}-${file.originalname.replace(/\.[^/.]+$/, "")}.mp3`;
-        const mp3Stream = Readable.from(mp3Buffer);
+        if (shouldChunk) {
+          console.log(`[UploadVideo] MP3 size ${mp3Buffer.length} exceeds threshold, chunking into parts`);
+          
+          // Chunk the MP3 into 10MB parts and store each as a separate S3 object
+          const chunks = await this.chunkingService.chunkAudioFile(
+            mp3Buffer,
+            "audio/mpeg",
+            {
+              chunkSizeBytes: 10 * 1024 * 1024, // 10MB chunks (well under OpenAI's 25MB limit)
+              onProgress: async (progress: number, partIndex: number) => {
+                // Chunking is 70-80% of total progress
+                await this.uploadJobRepository.update(jobId, {
+                  progress: 70 + Math.floor(progress * 0.1),
+                });
+              },
+            }
+          );
 
-        const mp3Result = await this.s3Storage.storeAudio(
-          mp3Stream,
-          s3Bucket,
-          mp3Key,
-          {
-            contentType: "audio/mpeg",
-            metadata: {
-              userId,
-              originalFilename: file.originalname,
-              type: "audio",
-              source: "video-conversion",
-            },
-            onProgress: async (progress: number) => {
-              // MP3 upload is 70-100% of total progress
-              const totalProgress = 70 + Math.floor(progress * 0.3);
-              await this.uploadJobRepository.update(jobId, {
-                progress: totalProgress,
-              });
-            },
+          console.log(`[UploadVideo] Chunked MP3 into ${chunks.length} parts`);
+
+          // Upload each 10MB chunk as a separate S3 object
+          // Each part is stored independently in S3 for direct processing later
+          const fileBaseKey = `users/${userId}/audio/${randomUUID()}-${file.originalname.replace(/\.[^/.]+$/, "")}.mp3`;
+          parts = [];
+          const uploadProgressPerPart = 20 / chunks.length; // 20% for uploads (10% chunking, 20% upload)
+
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            // Each chunk gets its own unique S3 key: {baseKey}-part-{index}
+            const partKey = `${fileBaseKey}-part-${i}`;
+            const chunkStream = Readable.from(chunk.buffer);
+
+            // Store each chunk as a separate S3 object
+            const result = await this.s3Storage.storeAudio(
+              chunkStream,
+              s3Bucket,
+              partKey,
+              {
+                contentType: "audio/mpeg",
+                metadata: {
+                  userId,
+                  originalFilename: file.originalname,
+                  type: "audio",
+                  source: "video-conversion",
+                  partIndex: i.toString(),
+                  totalParts: chunks.length.toString(),
+                },
+                onProgress: async (partProgress: number) => {
+                  // Upload progress for this part: 80% + (partProgress * uploadProgressPerPart)
+                  const totalProgress = 80 + (i * uploadProgressPerPart) + (partProgress * uploadProgressPerPart / 100);
+                  await this.uploadJobRepository.update(jobId, {
+                    progress: Math.min(Math.floor(totalProgress), 99),
+                  });
+                },
+              }
+            );
+
+            // Generate CDN URL for this part if CDN is configured
+            let partCdnUrl: string | undefined;
+            if (cdnUrl) {
+              const cdnBase = cdnUrl.replace(/\/$/, "");
+              partCdnUrl = `${cdnBase}/${result.bucket}/${result.key}`;
+            }
+
+            parts.push({
+              s3Key: result.key,
+              partIndex: i,
+              fileSize: chunk.buffer.length,
+              cdnUrl: partCdnUrl,
+            });
+
+            // Set bucket and first key for backward compatibility
+            if (i === 0) {
+              s3BucketName = result.bucket;
+              s3Key = result.key;
+            }
           }
-        );
 
-        s3BucketName = mp3Result.bucket;
-        s3Key = mp3Result.key;
+          console.log(`[UploadVideo] Uploaded ${parts.length} parts`);
+        } else {
+          // Single file upload (backward compatible)
+          const mp3Key = `users/${userId}/audio/${randomUUID()}-${file.originalname.replace(/\.[^/.]+$/, "")}.mp3`;
+          const mp3Stream = Readable.from(mp3Buffer);
+
+          const mp3Result = await this.s3Storage.storeAudio(
+            mp3Stream,
+            s3Bucket,
+            mp3Key,
+            {
+              contentType: "audio/mpeg",
+              metadata: {
+                userId,
+                originalFilename: file.originalname,
+                type: "audio",
+                source: "video-conversion",
+              },
+              onProgress: async (progress: number) => {
+                // MP3 upload is 70-100% of total progress
+                const totalProgress = 70 + Math.floor(progress * 0.3);
+                await this.uploadJobRepository.update(jobId, {
+                  progress: totalProgress,
+                });
+              },
+            }
+          );
+
+          s3BucketName = mp3Result.bucket;
+          s3Key = mp3Result.key;
+        }
       }
 
-      // Generate CDN URL if CDN is configured
+      // Generate CDN URL if CDN is configured (for first part or single file)
       let generatedCdnUrl: string | undefined;
       if (cdnUrl && s3BucketName && s3Key) {
         const cdnBase = cdnUrl.replace(/\/$/, "");
@@ -176,9 +265,12 @@ export class UploadVideoUseCase {
         filename: file.originalname.replace(/\.[^/.]+$/, "") + ".mp3",
         originalFilename: file.originalname,
         s3Bucket: s3BucketName,
-        s3Key,
+        s3Key, // Backward compatibility: points to first part
+        parts, // Array of parts for chunked uploads
+        partCount: parts?.length,
         videoSourceS3Bucket: videoS3BucketName,
         videoSourceS3Key: videoS3Key,
+        cdnUrl: generatedCdnUrl, // CDN URL for first part or single file
         audioSourceProvider,
         fileSize: mp3Buffer.length,
         mimeType: "audio/mpeg",

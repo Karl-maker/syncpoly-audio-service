@@ -22,6 +22,7 @@ import { MemoryUsageResponse } from "../dto/memory-usage.dto";
 import { UploadProgressResponse } from "../dto/upload-progress.dto";
 import { ProcessingProgressResponse } from "../dto/processing-progress.dto";
 import { TranscriptResponse, toTranscriptResponse, UpdateTranscriptRequest } from "../dto/transcript.dto";
+import { Transcript } from "../../domain/entities/transcript";
 import { BreakdownResponse, toBreakdownResponse, CreateBreakdownRequest, UpdateBreakdownRequest } from "../dto/breakdown.dto";
 
 export class AudioController {
@@ -332,6 +333,8 @@ export class AudioController {
 
       const audioFileId = req.params.audioFileId;
       const orderIndex = req.query.orderIndex ? parseInt(req.query.orderIndex as string, 10) : undefined;
+      const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
 
       if (!audioFileId) {
         res.status(400).json({ error: "audioFileId is required" });
@@ -342,6 +345,8 @@ export class AudioController {
         audioFileId,
         userId: req.user.userId,
         orderIndex,
+        page,
+        limit,
       });
 
       if (!result) {
@@ -349,14 +354,21 @@ export class AudioController {
         return;
       }
 
-      // Handle both single transcript and array of transcripts
-      if (Array.isArray(result)) {
-        const responses = result.map((t) => toTranscriptResponse(t));
-        res.status(200).json({ transcripts: responses, count: responses.length });
-      } else {
-        const response: TranscriptResponse = toTranscriptResponse(result);
-        res.status(200).json(response);
+      // Always return the same structure regardless of orderIndex or pagination
+      const useCaseResult = result as { transcripts: Transcript[]; pagination?: any; completed: boolean };
+      const responses = useCaseResult.transcripts.map((t) => toTranscriptResponse(t));
+      
+      const response: any = {
+        transcripts: responses,
+        count: responses.length,
+        completed: useCaseResult.completed,
+      };
+
+      if (useCaseResult.pagination) {
+        response.pagination = useCaseResult.pagination;
       }
+
+      res.status(200).json(response);
     } catch (error: any) {
       if (error.message?.includes("not found")) {
         res.status(404).json({ error: error.message });

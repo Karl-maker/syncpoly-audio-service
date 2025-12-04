@@ -11,6 +11,8 @@ export interface ProcessingJob {
   error?: string;
   startedAt?: Date;
   completedAt?: Date;
+  processedParts?: number[]; // Array of part indices that have been successfully processed
+  lastProcessedPartIndex?: number; // Last part index that was processed (for resuming)
   createdAt: Date;
   updatedAt: Date;
 }

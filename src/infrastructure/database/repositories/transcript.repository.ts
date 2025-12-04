@@ -75,5 +75,56 @@ export class TranscriptRepository extends MongoDBRepository<Transcript> {
       .toArray();
     return docs.map((doc: Record<string, any>) => this.toDomain(doc));
   }
+
+  /**
+   * Get the next orderIndex for an audioFileId
+   * Returns the highest orderIndex + 1, or 0 if no transcripts exist
+   */
+  async getNextOrderIndex(audioFileId: string): Promise<number> {
+    const result = await this.collection
+      .find({ audioFileId })
+      .sort({ orderIndex: -1 })
+      .limit(1)
+      .toArray();
+    
+    if (result.length === 0) {
+      return 0;
+    }
+    
+    const maxOrderIndex = result[0].orderIndex ?? -1;
+    return maxOrderIndex + 1;
+  }
+
+  /**
+   * Find transcripts with pagination
+   */
+  async findByAudioFileIdPaginated(
+    audioFileId: string,
+    page: number = 1,
+    limit: number = 10
+  ): Promise<{ transcripts: Transcript[]; total: number; page: number; limit: number; totalPages: number }> {
+    const skip = (page - 1) * limit;
+    
+    const [docs, total] = await Promise.all([
+      this.collection
+        .find({ audioFileId })
+        .sort({ orderIndex: 1, createdAt: 1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      this.collection.countDocuments({ audioFileId }),
+    ]);
+    
+    const transcripts = docs.map((doc: Record<string, any>) => this.toDomain(doc));
+    const totalPages = Math.ceil(total / limit);
+    
+    return {
+      transcripts,
+      total,
+      page,
+      limit,
+      totalPages,
+    };
+  }
 }
 

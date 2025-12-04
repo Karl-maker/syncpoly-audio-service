@@ -12,6 +12,9 @@ import { TranscriptionStep } from "../steps/transcription.step";
 import { ChunkAndEmbedStep } from "../steps/chunk.and.embed.step";
 import { StoreInVectorDbStep } from "../steps/store.in.vector.db.step";
 import { TranscriptRepository } from "../../infrastructure/database/repositories/transcript.repository";
+import { AudioChunkingService } from "../../infrastructure/audio/audio-chunking.service";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { Readable } from "stream";
 
 export interface ProcessAudioUseCaseParams {
   audioFileId: string;
@@ -34,6 +37,9 @@ export interface ProcessAudioUseCaseParams {
 }
 
 export class ProcessAudioUseCase {
+  private chunkingService: AudioChunkingService;
+  private readonly OPENAI_MAX_SIZE = 24 * 1024 * 1024; // 24MB (OpenAI's limit is 25MB)
+
   constructor(
     private audioFileRepository: AudioFileRepository,
     private processingJobRepository: ProcessingJobRepository,
@@ -42,7 +48,9 @@ export class ProcessAudioUseCase {
     private embeddingProvider: IEmbeddingProvider,
     private inMemoryVectorStore: IVectorStore,
     private openaiVectorStore: IVectorStore
-  ) {}
+  ) {
+    this.chunkingService = new AudioChunkingService();
+  }
 
   async execute(params: ProcessAudioUseCaseParams): Promise<ProcessingJob> {
     const {
@@ -57,16 +65,7 @@ export class ProcessAudioUseCase {
       s3Config,
     } = params;
 
-    // Check for existing job with same idempotency key
-    if (idempotencyKey) {
-      const existingJob = await this.processingJobRepository.findByIdempotencyKey(idempotencyKey, userId);
-      if (existingJob) {
-        console.log(`[ProcessAudio] Found existing job ${existingJob.id} with idempotency key ${idempotencyKey}, returning existing job`);
-        return existingJob;
-      }
-    }
-
-    // Get audio file
+    // Get audio file first
     const audioFile = await this.audioFileRepository.findById(audioFileId);
     if (!audioFile) {
       throw new Error(`Audio file not found: ${audioFileId}`);
@@ -76,7 +75,57 @@ export class ProcessAudioUseCase {
       throw new Error("Unauthorized: Audio file does not belong to user");
     }
 
-    // Create processing job
+    // Check for existing job for this audio file (idempotency)
+    // This ensures that processing the same audio file again will continue from where it left off
+    const existingJobs = await this.processingJobRepository.findByAudioFileId(audioFileId);
+    const existingJob = existingJobs.find(j => j.userId === userId);
+    
+    if (existingJob) {
+      // If job is completed, return it immediately
+      if (existingJob.status === "completed") {
+        console.log(`[ProcessAudio] Job ${existingJob.id} already completed for audio file ${audioFileId}, returning existing job`);
+        return existingJob;
+      }
+      
+      // If job is processing or failed, resume from last position
+      // This allows continuing processing after failures or interruptions
+      if (existingJob.status === "processing" || existingJob.status === "failed") {
+        // Refresh job state from database to get latest processedParts and lastProcessedPartIndex
+        const refreshedJob = await this.processingJobRepository.findById(existingJob.id);
+        if (!refreshedJob) {
+          throw new Error(`Job ${existingJob.id} not found`);
+        }
+        
+        const lastPartIndex = refreshedJob.lastProcessedPartIndex ?? -1;
+        const processedParts = refreshedJob.processedParts || [];
+        console.log(`[ProcessAudio] Resuming job ${refreshedJob.id} from last processed part ${lastPartIndex + 1}, already processed: [${processedParts.join(", ")}]`);
+        
+        // Update job status to processing if it was failed
+        if (refreshedJob.status === "failed") {
+          await this.processingJobRepository.update(refreshedJob.id, {
+            status: "processing",
+            error: undefined, // Clear previous error
+          });
+          console.log(`[ProcessAudio] Updated job ${refreshedJob.id} status from failed to processing`);
+        }
+        
+        // Get audio file again to ensure we have latest data
+        const latestAudioFile = await this.audioFileRepository.findById(audioFileId);
+        if (!latestAudioFile) {
+          throw new Error(`Audio file not found: ${audioFileId}`);
+        }
+        
+        // Resume processing with the refreshed job (contains latest state)
+        this.processAudioAsync(refreshedJob, latestAudioFile, s3Config).catch((error) => {
+          console.error(`[ProcessAudio] Processing job ${refreshedJob.id} failed:`, error);
+          console.error(`[ProcessAudio] Error stack:`, error.stack);
+        });
+        
+        return refreshedJob;
+      }
+    }
+
+    // Create new processing job
     const jobOptions = {
       ...options,
       skipTranscription: skipTranscription === true,
@@ -84,7 +133,7 @@ export class ProcessAudioUseCase {
       skipVectorStore: skipVectorStore === true,
     };
     
-    console.log(`[ProcessAudio] Creating job with options:`, JSON.stringify(jobOptions));
+    console.log(`[ProcessAudio] Creating new job with options:`, JSON.stringify(jobOptions));
     if (idempotencyKey) {
       console.log(`[ProcessAudio] Using idempotency key: ${idempotencyKey}`);
     }
@@ -95,6 +144,8 @@ export class ProcessAudioUseCase {
       idempotencyKey,
       status: "pending",
       progress: 0,
+      processedParts: [],
+      lastProcessedPartIndex: -1,
       vectorStoreType,
       options: jobOptions,
     } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -116,20 +167,29 @@ export class ProcessAudioUseCase {
     s3Config?: ProcessAudioUseCaseParams["s3Config"]
   ): Promise<void> {
     try {
-      // Update job status and progress
+      // Check if this is a resume (has processed parts or lastProcessedPartIndex >= 0)
+      const isResume = (job.processedParts && job.processedParts.length > 0) || (job.lastProcessedPartIndex !== undefined && job.lastProcessedPartIndex >= 0);
+      
+      // Update job status - preserve progress if resuming
       await this.processingJobRepository.update(job.id, {
         status: "processing",
-        progress: 0,
-        startedAt: new Date(),
+        progress: isResume ? job.progress : 0, // Preserve progress when resuming
+        startedAt: job.startedAt || new Date(), // Preserve original start time if resuming
       });
-
-      // Create audio source
-      let audioSource: IAudioSource;
-      if (audioFile.s3Bucket && audioFile.s3Key) {
-        audioSource = new S3AudioSource(audioFile.s3Bucket, audioFile.s3Key, s3Config);
-      } else {
-        throw new Error("Audio file must have S3 bucket and key for processing");
+      
+      if (isResume) {
+        console.log(`[ProcessAudio] Resuming job ${job.id} with existing progress: ${job.progress}%, processed parts: [${job.processedParts?.join(", ") || "none"}]`);
       }
+
+      if (!audioFile.s3Bucket) {
+        throw new Error("Audio file must have S3 bucket for processing");
+      }
+
+      // Check if audio file has multiple parts
+      const hasParts = audioFile.parts && audioFile.parts.length > 0;
+      const partCount = hasParts ? audioFile.parts.length : 1;
+
+      console.log(`[ProcessAudio] Audio file has ${partCount} part(s)`);
 
       // Use MongoDB vector store (supports userId/audioFileId organization)
       // The vectorStoreType parameter is kept for API compatibility but MongoDB is always used
@@ -166,69 +226,337 @@ export class ProcessAudioUseCase {
       console.log(`[ProcessAudio] Pipeline will have ${steps.length} steps`);
       const pipeline = new AudioProcessingPipeline(steps);
 
-      // Create processing context with file metadata
-      const context: AudioProcessingContext = {
-        audioSource,
-        audioSourceProvider: audioFile.audioSourceProvider,
-        options: {
-          ...job.options,
-          filename: audioFile.filename || audioFile.originalFilename || "audio.wav",
-          mimeType: audioFile.mimeType || "audio/wav",
-          audioFileId: audioFile.id, // Pass audioFileId for vector naming (audioFileId-segmentId)
-          userId: job.userId, // Pass userId for vector organization
-        },
-      };
-      
-      console.log(`[ProcessAudio] Processing context created with filename: ${context.options?.filename}, mimeType: ${context.options?.mimeType}`);
+      // Process each part sequentially
+      let allTranscripts: any[] = [];
+      let totalEmbeddings = 0;
+      const progressPerPart = 90 / partCount; // 90% for parts, 10% for completion
 
-      console.log(`[ProcessAudio] Starting pipeline execution with ${steps.length} steps`);
-      console.log(`[ProcessAudio] Audio source ID: ${audioSource.getId()}`);
+      // Get processed parts from job state (for resuming)
+      const processedParts = job.processedParts || [];
+      const startFromPartIndex = (job.lastProcessedPartIndex ?? -1) + 1;
 
-      // Calculate progress increments based on steps
-      const totalSteps = steps.length;
-      const progressPerStep = totalSteps > 0 ? 90 / totalSteps : 0; // 90% for steps, 10% for completion
-      let currentStep = 0;
+      console.log(`[ProcessAudio] Starting from part ${startFromPartIndex + 1}/${partCount}, already processed: [${processedParts.join(", ")}]`);
 
-      // Update progress: 5% - starting
-      if (totalSteps > 0) {
-        await this.processingJobRepository.update(job.id, { progress: 5 });
+      if (hasParts) {
+        // Process parts sequentially, starting from where we left off
+        for (let partIndex = startFromPartIndex; partIndex < partCount; partIndex++) {
+          // Skip if already processed
+          if (processedParts.includes(partIndex)) {
+            console.log(`[ProcessAudio] Part ${partIndex + 1} already processed, skipping`);
+            continue;
+          }
+
+          console.log(`[ProcessAudio] Processing part ${partIndex + 1}/${partCount}`);
+
+          // Get the part from upload chunks (each part is a separate 10MB S3 object)
+          const part = audioFile.parts[partIndex];
+          const partSize = part.fileSize || 0;
+          
+          // Safety check: 10MB chunks should always be under 24MB, but verify just in case
+          // If somehow a part exceeds OpenAI's limit, re-chunk it
+          if (partSize > this.OPENAI_MAX_SIZE) {
+            console.log(`[ProcessAudio] Part ${partIndex + 1} size (${partSize} bytes) exceeds OpenAI limit (${this.OPENAI_MAX_SIZE} bytes), re-chunking...`);
+            
+            // Download the part from S3
+            const partBuffer = await this.downloadS3FileToBuffer(
+              audioFile.s3Bucket!,
+              part.s3Key,
+              s3Config
+            );
+
+            // Re-chunk the part into smaller pieces (under 24MB each)
+            const subChunks = await this.chunkingService.chunkAudioFile(
+              partBuffer,
+              audioFile.mimeType || "audio/mpeg",
+              {
+                chunkSizeBytes: this.OPENAI_MAX_SIZE, // Chunk at 24MB to stay under OpenAI limit
+              }
+            );
+
+            console.log(`[ProcessAudio] Re-chunked part ${partIndex + 1} into ${subChunks.length} sub-chunks`);
+
+            // Process each sub-chunk sequentially (one at a time)
+            const subChunkProgressPerChunk = progressPerPart / subChunks.length;
+            for (let subChunkIndex = 0; subChunkIndex < subChunks.length; subChunkIndex++) {
+              const subChunk = subChunks[subChunkIndex];
+              console.log(`[ProcessAudio] Processing sub-chunk ${subChunkIndex + 1}/${subChunks.length} of part ${partIndex + 1}`);
+
+              // Create a temporary audio source from the buffer
+              const subChunkStream = Readable.from(subChunk.buffer);
+              const subChunkAudioSource: IAudioSource = {
+                getId: () => `${audioFile.s3Bucket}/${part.s3Key}-subchunk-${subChunkIndex}`,
+                getReadableStream: () => subChunkStream,
+              };
+
+              // Create processing context for this sub-chunk
+              const subContext: AudioProcessingContext = {
+                audioSource: subChunkAudioSource,
+                audioSourceProvider: audioFile.audioSourceProvider,
+                options: {
+                  ...job.options,
+                  filename: audioFile.filename || audioFile.originalFilename || "audio.wav",
+                  mimeType: audioFile.mimeType || "audio/wav",
+                  audioFileId: audioFile.id,
+                  userId: job.userId,
+                  partIndex,
+                  subChunkIndex,
+                  totalParts: partCount,
+                  totalSubChunks: subChunks.length,
+                },
+              };
+
+              // Update progress
+              const subChunkStartProgress = 5 + (partIndex * progressPerPart) + (subChunkIndex * subChunkProgressPerChunk);
+              await this.processingJobRepository.update(job.id, {
+                progress: Math.floor(subChunkStartProgress),
+              });
+
+              // Run pipeline for this sub-chunk (one at a time)
+              const subResult = await pipeline.run(subContext);
+
+              // Store embeddings immediately
+              if (subResult.embeddings && subResult.embeddings.length > 0) {
+                totalEmbeddings += subResult.embeddings.length;
+                console.log(`[ProcessAudio] Sub-chunk ${subChunkIndex + 1} of part ${partIndex + 1} produced ${subResult.embeddings.length} embeddings`);
+              }
+
+              if (subResult.transcript) {
+                allTranscripts.push(subResult.transcript);
+                console.log(`[ProcessAudio] Sub-chunk ${subChunkIndex + 1} of part ${partIndex + 1} transcript: ${subResult.transcript.id}`);
+              }
+
+              // Update progress
+              const subChunkEndProgress = 5 + (partIndex * progressPerPart) + ((subChunkIndex + 1) * subChunkProgressPerChunk);
+              await this.processingJobRepository.update(job.id, {
+                progress: Math.floor(subChunkEndProgress),
+              });
+            }
+          } else {
+            // Part is small enough, process directly (one at a time)
+            const partAudioSource = new S3AudioSource(audioFile.s3Bucket!, part.s3Key, s3Config);
+
+            // Create processing context for this part
+            const context: AudioProcessingContext = {
+              audioSource: partAudioSource,
+              audioSourceProvider: audioFile.audioSourceProvider,
+              options: {
+                ...job.options,
+                filename: audioFile.filename || audioFile.originalFilename || "audio.wav",
+                mimeType: audioFile.mimeType || "audio/wav",
+                audioFileId: audioFile.id,
+                userId: job.userId,
+                partIndex, // Track which part we're processing
+                totalParts: partCount,
+              },
+            };
+
+            // Update progress: start of part
+            const partStartProgress = 5 + (partIndex * progressPerPart);
+            await this.processingJobRepository.update(job.id, { 
+              progress: Math.floor(partStartProgress),
+              lastProcessedPartIndex: partIndex - 1, // Update before processing
+            });
+
+            // Run pipeline for this part (one at a time)
+            const result = await pipeline.run(context);
+
+            // Store embeddings immediately after processing this part
+            if (result.embeddings && result.embeddings.length > 0) {
+              totalEmbeddings += result.embeddings.length;
+              console.log(`[ProcessAudio] Part ${partIndex + 1} produced ${result.embeddings.length} embeddings`);
+            }
+
+            if (result.transcript) {
+              allTranscripts.push(result.transcript);
+              console.log(`[ProcessAudio] Part ${partIndex + 1} transcript: ${result.transcript.id}`);
+            }
+          }
+
+          // Mark part as processed
+          const updatedProcessedParts = [...processedParts, partIndex];
+          
+          // Update progress: end of part
+          const partEndProgress = 5 + ((partIndex + 1) * progressPerPart);
+          await this.processingJobRepository.update(job.id, { 
+            progress: Math.floor(partEndProgress),
+            lastProcessedPartIndex: partIndex,
+            processedParts: updatedProcessedParts,
+          });
+
+          console.log(`[ProcessAudio] Completed part ${partIndex + 1}/${partCount}`);
+        }
+      } else {
+        // Single file processing (backward compatible)
+        let audioSource: IAudioSource;
+        if (audioFile.s3Key) {
+          // Check if single file exceeds OpenAI limit
+          const fileSize = audioFile.fileSize || 0;
+          if (fileSize > this.OPENAI_MAX_SIZE) {
+            console.log(`[ProcessAudio] Single file size (${fileSize} bytes) exceeds OpenAI limit (${this.OPENAI_MAX_SIZE} bytes), chunking...`);
+            
+            // Download and chunk the file
+            const fileBuffer = await this.downloadS3FileToBuffer(
+              audioFile.s3Bucket!,
+              audioFile.s3Key,
+              s3Config
+            );
+
+            const chunks = await this.chunkingService.chunkAudioFile(
+              fileBuffer,
+              audioFile.mimeType || "audio/mpeg",
+              {
+                chunkSizeBytes: this.OPENAI_MAX_SIZE,
+              }
+            );
+
+            console.log(`[ProcessAudio] Chunked single file into ${chunks.length} parts`);
+
+            // Process each chunk sequentially (one at a time)
+            const chunkProgressPerChunk = 90 / chunks.length;
+            for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+              const chunk = chunks[chunkIndex];
+              console.log(`[ProcessAudio] Processing chunk ${chunkIndex + 1}/${chunks.length}`);
+
+              const chunkStream = Readable.from(chunk.buffer);
+              const chunkAudioSource: IAudioSource = {
+                getId: () => `${audioFile.s3Bucket}/${audioFile.s3Key}-chunk-${chunkIndex}`,
+                getReadableStream: () => chunkStream,
+              };
+
+              const chunkContext: AudioProcessingContext = {
+                audioSource: chunkAudioSource,
+                audioSourceProvider: audioFile.audioSourceProvider,
+                options: {
+                  ...job.options,
+                  filename: audioFile.filename || audioFile.originalFilename || "audio.wav",
+                  mimeType: audioFile.mimeType || "audio/wav",
+                  audioFileId: audioFile.id,
+                  userId: job.userId,
+                },
+              };
+
+              await this.processingJobRepository.update(job.id, {
+                progress: Math.floor(5 + (chunkIndex * chunkProgressPerChunk)),
+              });
+
+              const chunkResult = await pipeline.run(chunkContext);
+
+              if (chunkResult.transcript) {
+                allTranscripts.push(chunkResult.transcript);
+              }
+              if (chunkResult.embeddings) {
+                totalEmbeddings += chunkResult.embeddings.length;
+              }
+
+              await this.processingJobRepository.update(job.id, {
+                progress: Math.floor(5 + ((chunkIndex + 1) * chunkProgressPerChunk)),
+              });
+            }
+          } else {
+            // File is small enough, process directly
+            audioSource = new S3AudioSource(audioFile.s3Bucket, audioFile.s3Key, s3Config);
+
+            // Create processing context with file metadata
+            const context: AudioProcessingContext = {
+              audioSource,
+              audioSourceProvider: audioFile.audioSourceProvider,
+              options: {
+                ...job.options,
+                filename: audioFile.filename || audioFile.originalFilename || "audio.wav",
+                mimeType: audioFile.mimeType || "audio/wav",
+                audioFileId: audioFile.id,
+                userId: job.userId,
+              },
+            };
+            
+            console.log(`[ProcessAudio] Processing context created with filename: ${context.options?.filename}, mimeType: ${context.options?.mimeType}`);
+            console.log(`[ProcessAudio] Starting pipeline execution with ${steps.length} steps`);
+            console.log(`[ProcessAudio] Audio source ID: ${audioSource.getId()}`);
+
+            // Update progress: 5% - starting
+            await this.processingJobRepository.update(job.id, { progress: 5 });
+
+            // Run pipeline
+            const result = await pipeline.run(context);
+            
+            if (result.transcript) {
+              allTranscripts.push(result.transcript);
+            }
+            if (result.embeddings) {
+              totalEmbeddings = result.embeddings.length;
+            }
+
+            console.log(`[ProcessAudio] Pipeline execution completed`);
+            console.log(`[ProcessAudio] Result has transcript: ${!!result.transcript}`);
+            console.log(`[ProcessAudio] Result has embeddings: ${!!result.embeddings}, count: ${result.embeddings?.length || 0}`);
+          }
+        } else {
+          throw new Error("Audio file must have S3 key for processing");
+        }
       }
 
-      // Run pipeline with progress tracking
-      const result = await pipeline.run(context);
-      
-      // Update progress after pipeline completion
-      if (totalSteps > 0) {
-        currentStep = totalSteps;
-        await this.processingJobRepository.update(job.id, { 
-          progress: Math.min(5 + (currentStep * progressPerStep), 95) 
-        });
-      }
-      
-      console.log(`[ProcessAudio] Pipeline execution completed`);
-      console.log(`[ProcessAudio] Result has transcript: ${!!result.transcript}`);
-      console.log(`[ProcessAudio] Result has embeddings: ${!!result.embeddings}, count: ${result.embeddings?.length || 0}`);
+      console.log(`[ProcessAudio] Processing completed. Total transcripts: ${allTranscripts.length}, Total embeddings: ${totalEmbeddings}`);
 
-      console.log(`[ProcessAudio] Pipeline completed. Transcript: ${result.transcript?.id}, Embeddings: ${result.embeddings?.length || 0}`);
+      // Use the first transcript ID for backward compatibility
+      const firstTranscriptId = allTranscripts.length > 0 ? allTranscripts[0].id : undefined;
 
       // Update job with results and complete progress
       await this.processingJobRepository.update(job.id, {
         status: "completed",
         progress: 100,
-        transcriptId: result.transcript?.id,
+        transcriptId: firstTranscriptId,
         completedAt: new Date(),
       });
     } catch (error: any) {
       console.error(`[ProcessAudio] Error processing audio for job ${job.id}:`, error);
       console.error(`[ProcessAudio] Error stack:`, error.stack);
+      
+      // Preserve state on error - don't reset progress, keep processed parts
+      // This allows resuming from last successful part
       await this.processingJobRepository.update(job.id, {
         status: "failed",
-            progress: 0, // Reset progress on error
-            error: error.message || "Unknown error",
-            completedAt: new Date(),
-          });
-          throw error; // Re-throw to ensure error is visible
-        }
+        error: error.message || "Unknown error",
+        completedAt: new Date(),
+        // Keep progress and processedParts so we can resume
+      });
+      throw error; // Re-throw to ensure error is visible
+    }
+  }
+
+  /**
+   * Download a file from S3 to a buffer.
+   */
+  private async downloadS3FileToBuffer(
+    bucket: string,
+    key: string,
+    s3Config?: ProcessAudioUseCaseParams["s3Config"]
+  ): Promise<Buffer> {
+    const region = s3Config?.region || "us-east-1";
+    const s3Client = new S3Client({
+      region: typeof region === "string" ? region : "us-east-1",
+      credentials: s3Config?.credentials,
+      endpoint: s3Config?.endpoint,
+      forcePathStyle: s3Config?.forcePathStyle || false,
+    });
+
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    });
+
+    const response = await s3Client.send(command);
+    if (!response.Body) {
+      throw new Error(`No body returned from S3 for ${bucket}/${key}`);
+    }
+
+    const stream = response.Body as Readable;
+    const chunks: Buffer[] = [];
+
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+
+    return Buffer.concat(chunks);
   }
 }
 
