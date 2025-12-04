@@ -52,5 +52,28 @@ export class ProcessingJobRepository extends MongoDBRepository<ProcessingJob> {
     });
     return doc ? this.toDomain(doc as Record<string, any>) : null;
   }
+
+  /**
+   * Find all processing jobs for a user that are currently processing (status: "processing" or "pending")
+   * and were created or started in the past day
+   */
+  async findProcessingJobsInPastDay(userId: string): Promise<ProcessingJob[]> {
+    const oneDayAgo = new Date();
+    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+
+    const docs = await this.collection
+      .find({
+        userId,
+        status: { $in: ["pending", "processing"] },
+        $or: [
+          { createdAt: { $gte: oneDayAgo } },
+          { startedAt: { $gte: oneDayAgo } },
+        ],
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+    
+    return docs.map((doc: Record<string, any>) => this.toDomain(doc));
+  }
 }
 

@@ -72,6 +72,9 @@ export function createAudioRoutes(
   // Get processing progress
   router.get("/process/:jobId/progress", (req, res) => audioController.getProcessingProgress(req as any, res));
 
+  // Get all processing jobs for the user (from past day)
+  router.get("/process/jobs", (req, res) => audioController.getProcessingJobs(req as any, res));
+
   // Get transcript for an audio file
   router.get("/:audioFileId/transcript", (req, res) => audioController.getTranscript(req as any, res));
 

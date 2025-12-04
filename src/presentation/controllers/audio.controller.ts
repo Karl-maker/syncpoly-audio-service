@@ -7,6 +7,7 @@ import { ProcessAudioUseCase } from "../../application/use-cases/process-audio.u
 import { GetMemoryUsageUseCase } from "../../application/use-cases/get-memory-usage.use-case";
 import { GetUploadProgressUseCase } from "../../application/use-cases/get-upload-progress.use-case";
 import { GetProcessingProgressUseCase } from "../../application/use-cases/get-processing-progress.use-case";
+import { GetProcessingJobsUseCase } from "../../application/use-cases/get-processing-jobs.use-case";
 import { GetTranscriptUseCase } from "../../application/use-cases/get-transcript.use-case";
 import { UpdateTranscriptUseCase } from "../../application/use-cases/update-transcript.use-case";
 import { GenerateBreakdownUseCase } from "../../application/use-cases/generate-breakdown.use-case";
@@ -33,6 +34,7 @@ export class AudioController {
     private getMemoryUsageUseCase: GetMemoryUsageUseCase,
     private getUploadProgressUseCase: GetUploadProgressUseCase,
     private getProcessingProgressUseCase: GetProcessingProgressUseCase,
+    private getProcessingJobsUseCase: GetProcessingJobsUseCase,
     private getTranscriptUseCase: GetTranscriptUseCase,
     private updateTranscriptUseCase: UpdateTranscriptUseCase,
     private generateBreakdownUseCase: GenerateBreakdownUseCase,
@@ -321,6 +323,40 @@ export class AudioController {
         return;
       }
       res.status(500).json({ error: error.message || "Failed to get processing progress" });
+    }
+  }
+
+  async getProcessingJobs(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const jobs = await this.getProcessingJobsUseCase.execute({
+        userId: req.user.userId,
+      });
+
+      const responses: ProcessingProgressResponse[] = jobs.map((job) => ({
+        jobId: job.id,
+        audioFileId: job.audioFileId,
+        status: job.status,
+        progress: job.progress,
+        transcriptId: job.transcriptId,
+        vectorStoreType: job.vectorStoreType,
+        error: job.error,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+      }));
+
+      res.status(200).json({
+        jobs: responses,
+        count: responses.length,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get processing jobs" });
     }
   }
 
