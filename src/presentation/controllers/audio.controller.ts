@@ -344,6 +344,8 @@ export class AudioController {
   }
 
   async getIncompleteUploadJobs(req: AuthenticatedRequest, res: Response): Promise<void> {
+
+    
     try {
       if (!req.user) {
         res.status(401).json({ error: "Unauthorized" });
@@ -355,7 +357,7 @@ export class AudioController {
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 5;
 
       const result = await this.getIncompleteUploadJobsUseCase.execute({
-        userId: req.user.userId,
+        userId: req?.user?.userId || "",
         page,
         limit,
       });
@@ -801,11 +803,28 @@ export class AudioController {
         return;
       }
 
-      const audioFiles = await this.audioFileRepository.findByUserId(req.user.userId);
+      // Get pagination parameters from query string
+      const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
 
-      res.status(200).json({ 
-        audioFiles,
-        count: audioFiles.length 
+      // Validate pagination parameters
+      const validPage = Math.max(1, page);
+      const validLimit = Math.max(1, Math.min(100, limit)); // Limit between 1 and 100
+
+      const result = await this.audioFileRepository.findByUserIdPaginated(
+        req.user.userId,
+        validPage,
+        validLimit
+      );
+
+      res.status(200).json({
+        audioFiles: result.files,
+        pagination: {
+          total: result.total,
+          totalPages: result.totalPages,
+          currentPage: result.currentPage,
+          limit: validLimit,
+        },
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to get audio files" });
