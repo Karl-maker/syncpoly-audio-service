@@ -10,6 +10,7 @@ import { ChatMessageRepository } from "./infrastructure/database/repositories/ch
 import { TaskRepository } from "./infrastructure/database/repositories/task.repository";
 import { QuestionRepository } from "./infrastructure/database/repositories/question.repository";
 import { BreakdownRepository } from "./infrastructure/database/repositories/breakdown.repository";
+import { CustomerRepository } from "./infrastructure/database/repositories/customer.repository";
 import { S3AudioStorage } from "./infrastructure/aws/s3.audio.storage";
 import { UploadAudioUseCase } from "./application/use-cases/upload-audio.use-case";
 import { UploadVideoUseCase } from "./application/use-cases/upload-video.use-case";
@@ -25,9 +26,15 @@ import { CreateBreakdownUseCase } from "./application/use-cases/create-breakdown
 import { UpdateBreakdownUseCase } from "./application/use-cases/update-breakdown.use-case";
 import { GetBreakdownUseCase } from "./application/use-cases/get-breakdown.use-case";
 import { DeleteBreakdownUseCase } from "./application/use-cases/delete-breakdown.use-case";
+import { CreateCustomerUseCase } from "./application/use-cases/create-customer.use-case";
+import { GetCustomerUseCase } from "./application/use-cases/get-customer.use-case";
+import { UpdateCustomerUseCase } from "./application/use-cases/update-customer.use-case";
+import { DeactivateCustomerUseCase } from "./application/use-cases/deactivate-customer.use-case";
 import { AudioController } from "./presentation/controllers/audio.controller";
 import { ChatController } from "./presentation/controllers/chat.controller";
+import { CustomerController } from "./presentation/controllers/customer.controller";
 import { createAudioRoutes } from "./presentation/routes/audio.routes";
+import { createCustomerRoutes } from "./presentation/routes/customer.routes";
 import { ChatUseCase } from "./application/use-cases/chat.use-case";
 import { AudioProcessingPipeline } from "./application/pipeline/audio.processing.pipeline";
 import { TranscriptionStep } from "./application/steps/transcription.step";
@@ -53,6 +60,7 @@ async function main() {
     const questionRepository = new QuestionRepository(db);
     const chatMessageRepository = new ChatMessageRepository(db, taskRepository, questionRepository);
     const breakdownRepository = new BreakdownRepository(db);
+    const customerRepository = new CustomerRepository(db);
 
     // Initialize infrastructure
     const transcriptionProvider = new OpenAITranscriptionProvider(config.openaiApiKey);
@@ -142,6 +150,10 @@ async function main() {
     );
     const getBreakdownUseCase = new GetBreakdownUseCase(breakdownRepository);
     const deleteBreakdownUseCase = new DeleteBreakdownUseCase(breakdownRepository);
+    const createCustomerUseCase = new CreateCustomerUseCase(customerRepository);
+    const getCustomerUseCase = new GetCustomerUseCase(customerRepository);
+    const updateCustomerUseCase = new UpdateCustomerUseCase(customerRepository);
+    const deactivateCustomerUseCase = new DeactivateCustomerUseCase(customerRepository);
 
     // Initialize chat use case
     const chatUseCase = new ChatUseCase(
@@ -174,6 +186,12 @@ async function main() {
       breakdownRepository
     );
     const chatController = new ChatController(chatUseCase, chatMessageRepository);
+    const customerController = new CustomerController(
+      createCustomerUseCase,
+      getCustomerUseCase,
+      updateCustomerUseCase,
+      deactivateCustomerUseCase
+    );
 
     // Initialize Express app
     const app = express();
@@ -191,6 +209,7 @@ async function main() {
 
     // Routes
     app.use("/api/audio", createAudioRoutes(audioController, chatController));
+    app.use("/api/customer", createCustomerRoutes(customerController));
 
     // Error handling middleware
     app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
