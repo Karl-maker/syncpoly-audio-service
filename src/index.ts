@@ -21,6 +21,7 @@ import { GetProcessingProgressUseCase } from "./application/use-cases/get-proces
 import { GetProcessingJobsUseCase } from "./application/use-cases/get-processing-jobs.use-case";
 import { GetTranscriptUseCase } from "./application/use-cases/get-transcript.use-case";
 import { UpdateTranscriptUseCase } from "./application/use-cases/update-transcript.use-case";
+import { CalculateUsagePeriodUseCase } from "./application/use-cases/calculate-usage-period.use-case";
 import { GenerateBreakdownUseCase } from "./application/use-cases/generate-breakdown.use-case";
 import { CreateBreakdownUseCase } from "./application/use-cases/create-breakdown.use-case";
 import { UpdateBreakdownUseCase } from "./application/use-cases/update-breakdown.use-case";
@@ -116,7 +117,13 @@ async function main() {
       );
     const getMemoryUsageUseCase = new GetMemoryUsageUseCase(
       audioFileRepository,
-      processingJobRepository
+      processingJobRepository,
+      transcriptRepository
+    );
+    const calculateUsagePeriodUseCase = new CalculateUsagePeriodUseCase(
+      audioFileRepository,
+      processingJobRepository,
+      transcriptRepository
     );
     const getUploadProgressUseCase = new GetUploadProgressUseCase(uploadJobRepository);
     const getProcessingProgressUseCase = new GetProcessingProgressUseCase(processingJobRepository);
@@ -172,6 +179,7 @@ async function main() {
       uploadVideoUseCase,
       processAudioUseCase,
       getMemoryUsageUseCase,
+      calculateUsagePeriodUseCase,
       getUploadProgressUseCase,
       getProcessingProgressUseCase,
       getProcessingJobsUseCase,

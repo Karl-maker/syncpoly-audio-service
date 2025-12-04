@@ -19,7 +19,8 @@ import { AudioFileRepository } from "../../infrastructure/database/repositories/
 import { BreakdownRepository } from "../../infrastructure/database/repositories/breakdown.repository";
 import { UploadAudioResponse } from "../dto/upload-audio.dto";
 import { ProcessAudioRequest, ProcessAudioResponse } from "../dto/process-audio.dto";
-import { MemoryUsageResponse } from "../dto/memory-usage.dto";
+import { MemoryUsageResponse, UsagePeriodResponse } from "../dto/memory-usage.dto";
+import { CalculateUsagePeriodUseCase } from "../../application/use-cases/calculate-usage-period.use-case";
 import { UploadProgressResponse } from "../dto/upload-progress.dto";
 import { ProcessingProgressResponse } from "../dto/processing-progress.dto";
 import { TranscriptResponse, toTranscriptResponse, UpdateTranscriptRequest } from "../dto/transcript.dto";
@@ -32,6 +33,7 @@ export class AudioController {
     private uploadVideoUseCase: UploadVideoUseCase,
     private processAudioUseCase: ProcessAudioUseCase,
     private getMemoryUsageUseCase: GetMemoryUsageUseCase,
+    private calculateUsagePeriodUseCase: CalculateUsagePeriodUseCase,
     private getUploadProgressUseCase: GetUploadProgressUseCase,
     private getProcessingProgressUseCase: GetProcessingProgressUseCase,
     private getProcessingJobsUseCase: GetProcessingJobsUseCase,
@@ -223,12 +225,72 @@ export class AudioController {
         vectorStoreMemoryMB: memoryUsage.vectorStoreMemoryBytes
           ? memoryUsage.vectorStoreMemoryBytes / (1024 * 1024)
           : undefined,
+        totalAudioProcessedSeconds: memoryUsage.totalAudioProcessedSeconds,
+        totalAudioProcessedMinutes: memoryUsage.totalAudioProcessedSeconds / 60,
+        totalAICreditsUsed: memoryUsage.totalAICreditsUsed,
+        provider: memoryUsage.provider,
+        processLog: memoryUsage.processLog,
         lastCalculatedAt: memoryUsage.lastCalculatedAt,
       };
 
       res.status(200).json(response);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to get memory usage" });
+    }
+  }
+
+  async calculateUsagePeriod(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const userId = req.user.userId;
+      const startDateStr = req.query.startDate as string;
+      const endDateStr = req.query.endDate as string;
+
+      if (!startDateStr || !endDateStr) {
+        res.status(400).json({ error: "startDate and endDate query parameters are required (ISO 8601 format)" });
+        return;
+      }
+
+      const startDate = new Date(startDateStr);
+      const endDate = new Date(endDateStr);
+
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        res.status(400).json({ error: "Invalid date format. Use ISO 8601 format (e.g., 2024-01-01T00:00:00Z)" });
+        return;
+      }
+
+      if (startDate > endDate) {
+        res.status(400).json({ error: "startDate must be before or equal to endDate" });
+        return;
+      }
+
+      const usagePeriod = await this.calculateUsagePeriodUseCase.execute({
+        userId,
+        startDate,
+        endDate,
+      });
+
+      const response: UsagePeriodResponse = {
+        userId: usagePeriod.userId,
+        period: usagePeriod.period,
+        totalStorageBytes: usagePeriod.totalStorageBytes,
+        totalStorageMB: usagePeriod.totalStorageBytes / (1024 * 1024),
+        totalStorageGB: usagePeriod.totalStorageBytes / (1024 * 1024 * 1024),
+        totalAudioProcessedSeconds: usagePeriod.totalAudioProcessedSeconds,
+        totalAudioProcessedMinutes: usagePeriod.totalAudioProcessedMinutes,
+        totalAICreditsUsed: usagePeriod.totalAICreditsUsed,
+        provider: usagePeriod.provider,
+        processLog: usagePeriod.processLog,
+        calculatedAt: usagePeriod.calculatedAt,
+      };
+
+      res.status(200).json(response);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to calculate usage period" });
     }
   }
 

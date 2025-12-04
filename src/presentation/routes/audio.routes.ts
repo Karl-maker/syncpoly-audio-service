@@ -66,6 +66,9 @@ export function createAudioRoutes(
   // Get memory usage
   router.get("/memory/:userId", (req, res) => audioController.getMemoryUsage(req as any, res));
 
+  // Calculate usage period (requires startDate and endDate query params)
+  router.get("/usage/period", (req, res) => audioController.calculateUsagePeriod(req as any, res));
+
   // Get upload progress
   router.get("/upload/:jobId/progress", (req, res) => audioController.getUploadProgress(req as any, res));
 
