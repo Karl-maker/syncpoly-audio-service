@@ -191,6 +191,7 @@ async function main() {
       chatMessageRepository,
       taskRepository,
       questionRepository,
+      customerRepository,
       config.openaiApiKey
     );
 

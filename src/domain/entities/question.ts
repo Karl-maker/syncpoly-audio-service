@@ -1,4 +1,4 @@
-export type QuestionType = "true-false" | "multiple-choice" | "short-answer";
+export type QuestionType = "true-false" | "multiple-choice";
 
 export interface QuestionOption {
   id: string;
@@ -13,7 +13,7 @@ export interface Question {
   type: QuestionType;
   question: string; // The question text
   options?: QuestionOption[]; // Required for multiple-choice, optional for others
-  correctAnswer?: string; // For short-answer or as reference
+  correctAnswer?: string; // For reference (e.g., true/false for true-false questions)
   explanation?: string; // Optional explanation or context
   createdAt: Date;
   updatedAt: Date;

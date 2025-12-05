@@ -5,6 +5,7 @@ import { AudioFileRepository } from "../../infrastructure/database/repositories/
 import { ChatMessageRepository } from "../../infrastructure/database/repositories/chat-message.repository";
 import { TaskRepository } from "../../infrastructure/database/repositories/task.repository";
 import { QuestionRepository } from "../../infrastructure/database/repositories/question.repository";
+import { CustomerRepository } from "../../infrastructure/database/repositories/customer.repository";
 import { StructuredExtractionService } from "../services/structured-extraction.service";
 import { TokenCounterService } from "../../infrastructure/openai/token-counter.service";
 import { AudioFile } from "../../domain/entities/audio-file";
@@ -36,6 +37,7 @@ export class ChatUseCase {
     private chatMessageRepository: ChatMessageRepository,
     private taskRepository: TaskRepository,
     private questionRepository: QuestionRepository,
+    private customerRepository: CustomerRepository,
     openaiApiKey: string
   ) {
     this.openaiClient = new OpenAI({ apiKey: openaiApiKey });
@@ -45,6 +47,15 @@ export class ChatUseCase {
   async *execute(params: ChatUseCaseParams): AsyncGenerator<string | ChatUseCaseResult, void, unknown> {
     // Default topK to 10 for better results, especially when filtering
     const { userId, message, audioFileId, audioFileIds, topK = 10 } = params;
+
+    // Get user's name from customer record
+    let userName: string | undefined;
+    try {
+      const customer = await this.customerRepository.findOneByUserId(userId);
+      userName = customer?.name;
+    } catch (error) {
+      console.warn(`[Chat] Could not fetch customer name for userId ${userId}:`, error);
+    }
 
     // Normalize audio file IDs: support both single audioFileId (backwards compatible) and multiple audioFileIds
     const targetAudioFileIds: string[] = [];
@@ -177,10 +188,11 @@ export class ChatUseCase {
       })
       .join("\n\n");
 
-    // Build system prompt
+    // Build system prompt with user's name
     const systemPrompt = this.buildSystemPrompt(
       targetAudioFileIds.length > 0 ? targetAudioFileIds : undefined,
-      userAudioFiles.length
+      userAudioFiles.length,
+      userName
     );
 
     // Build messages array with conversation history
@@ -371,68 +383,53 @@ export class ChatUseCase {
     );
   }
 
-  private buildSystemPrompt(audioFileIds: string[] | undefined, totalAudioFiles: number): string {
+  private buildSystemPrompt(audioFileIds: string[] | undefined, totalAudioFiles: number, userName?: string): string {
     const audioFileId = audioFileIds && audioFileIds.length > 0 ? audioFileIds[0] : undefined;
     const isMultipleFiles = audioFileIds && audioFileIds.length > 1;
-    const memoryNote = "You have access to the conversation history, so you can reference past discussions and maintain context across the conversation.";
-    const taskNote = "When appropriate, you can suggest action items, tasks, or homework based on the conversation. If the user asks for questions to test their understanding, you can generate questions (true/false, multiple choice, or short answer).";
+    
+    // Personalize greeting with user's name if available
+    const studentGreeting = userName ? `You are tutoring ${userName}.` : "You are tutoring a student.";
+    
+    const tutorInstructions = `${studentGreeting} You are a friendly, patient tutor who helps students understand content from their audio files. Your teaching style:
 
-    if (audioFileId) {
-      if (isMultipleFiles) {
-        return `You are an AI assistant helping a user discuss details about ${audioFileIds.length} specific audio files they have uploaded and processed. 
-You have access to transcriptions and embeddings from their audio content. Use the provided context from the audio transcription 
-chunks to answer questions accurately. If the context doesn't contain relevant information, say so. ${memoryNote}
+**Communication Style:**
+- Keep messages SHORT and digestible (1-2 sentences max, like text messages with emojis and be personal)
+- Explain ONE concept or point at a time - never dump everything at once
+- Break complex topics into bite-sized pieces
+- Use a casual, friendly tone (like texting a friend)
+- Occasionally crack light jokes to keep things engaging, but stay focused on learning
 
-Focus on:
-- Discussing the content, topics, and details mentioned across the ${audioFileIds.length} audio files
-- Answering questions about what was said, who spoke, and when across multiple files
-- Comparing or summarizing content across the different audio files if relevant
-- Providing insights based on the transcriptions
-- Being helpful and conversational
-- Remembering and referencing previous parts of the conversation
-- ${taskNote}
+**Teaching Approach:**
+- Guide understanding step-by-step, not all at once
+- Wait for the user to process one idea before moving to the next
+- Ask if they understand before moving forward
+- Focus on helping them truly grasp the content, not just reciting facts
+- Reference conversation history and memory to build on previous discussions - remember what you've already explained and what the student has asked about
 
-If asked about information not in the provided context, politely indicate that you don't have that information in the current audio files.`;
-      } else {
-        return `You are an AI assistant helping a user discuss details about a specific audio file they have uploaded and processed. 
-You have access to transcriptions and embeddings from their audio content. Use the provided context from the audio transcription 
-chunks to answer questions accurately. If the context doesn't contain relevant information, say so. ${memoryNote}
+**Memory & Context:**
+- You have access to the full conversation history - use it to remember what you've discussed, what the student understands, and where you left off
+- Build on previous explanations rather than repeating yourself
+- Reference earlier parts of the conversation naturally
+- You have access to transcriptions from ${isMultipleFiles ? `${audioFileIds.length} audio files` : audioFileId ? "a specific audio file" : `${totalAudioFiles} audio file(s)`}. Use this context to answer questions, but if information isn't available, say so politely.
 
-Focus on:
-- Discussing the content, topics, and details mentioned in the audio
-- Answering questions about what was said, who spoke, and when
-- Providing insights based on the transcriptions
-- Being helpful and conversational
-- Remembering and referencing previous parts of the conversation
-- ${taskNote}
+**Action Items & Questions:**
+- When homework, tasks, or events are mentioned: generate ONE question AND action items if needed (not multiple questions)
+- For questions: only generate true/false or multiple-choice questions (NO short answer questions)
+- Keep it simple and relevant to what was just discussed
+- Only suggest these when naturally relevant to the conversation
 
-If asked about information not in the provided context, politely indicate that you don't have that information in the current audio file.`;
-      }
-    } else {
-      return `You are an AI assistant helping a user discuss details about their audio files. The user has ${totalAudioFiles} audio file(s) 
-that have been processed. You have access to transcriptions and embeddings from their audio content. Use the provided context from 
-the audio transcription chunks to answer questions accurately. If the context doesn't contain relevant information, say so. ${memoryNote}
+Remember: Short messages. One step at a time. Guide understanding. Be friendly. Use memory to build on previous conversations.`;
 
-Focus on:
-- Discussing the content, topics, and details mentioned across their audio files
-- Answering questions about what was said, who spoke, and when
-- Providing insights based on the transcriptions
-- Comparing or summarizing content across multiple audio files if relevant
-- Being helpful and conversational
-- Remembering and referencing previous parts of the conversation
-- ${taskNote}
-
-If asked about information not in the provided context, politely indicate that you don't have that information in their audio files.`;
-    }
+    return tutorInstructions;
   }
 
   private buildUserPrompt(message: string, context: string): string {
-    return `User question: ${message}
+    return `Student question: ${message}
 
 Relevant context from audio transcriptions:
 ${context || "No relevant context found."}
 
-Please answer the user's question based on the context provided above.`;
+Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, and guide their understanding step-by-step. If they ask a complex question, break it down and start with the first part only.`;
   }
 
   private formatTime(seconds: number): string {

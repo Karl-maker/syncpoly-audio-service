@@ -39,7 +39,7 @@ export interface BreakdownResponse {
   }>;
   questions: Array<{
     id: string;
-    type: "true-false" | "multiple-choice" | "short-answer";
+    type: "true-false" | "multiple-choice";
     question: string;
     options?: Array<{
       id: string;

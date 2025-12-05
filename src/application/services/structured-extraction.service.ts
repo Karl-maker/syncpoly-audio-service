@@ -34,7 +34,7 @@ ${responseText}
 
 Extract:
 1. Tasks/Action Items/Homework: Any items that need to be done, with due dates if mentioned, descriptions, priority if inferable, and location if mentioned.
-2. Questions: Any questions that could be used for testing/learning (true-false, multiple choice, or short answer).
+2. Questions: Any questions that could be used for testing/learning (true-false or multiple choice only - NO short answer questions).
 
 Return a JSON object with this structure:
 {
@@ -48,10 +48,10 @@ Return a JSON object with this structure:
   ],
   "questions": [
     {
-      "type": "true-false|multiple-choice|short-answer",
+      "type": "true-false|multiple-choice",
       "question": "string (required)",
       "options": [{"id": "string", "text": "string", "isCorrect": boolean}], // Required for multiple-choice and true-false. For true-false, mark which option (True or False) is correct.
-      "correctAnswer": "string (optional, for short-answer or as reference. For true-false, use 'true' or 'false')",
+      "correctAnswer": "string (optional, for reference. For true-false, use 'true' or 'false')",
       "explanation": "string (optional)"
     }
   ]
@@ -188,7 +188,7 @@ If no tasks or questions are found, return empty arrays. Only extract items that
   }
 
   private validateQuestionType(type: string): QuestionType | null {
-    const validTypes: QuestionType[] = ["true-false", "multiple-choice", "short-answer"];
+    const validTypes: QuestionType[] = ["true-false", "multiple-choice"];
     if (validTypes.includes(type as QuestionType)) {
       return type as QuestionType;
     }

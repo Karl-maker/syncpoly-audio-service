@@ -99,7 +99,7 @@ Generate a structured breakdown with:
 2. Bullet Points: Key points mentioned in the audio (5-10 bullet points)
 3. Main Takeaways: The most important insights or conclusions (3-5 takeaways)
 4. Action Items: Any tasks, homework, or action items mentioned (extract with due dates if mentioned)
-5. Questions: Generate 3-5 questions to test understanding (mix of true/false, multiple choice, and short answer)
+5. Questions: Generate 3-5 questions to test understanding (mix of true/false and multiple choice only - NO short answer questions)
 
 Return the breakdown in a clear, structured format.`;
 
