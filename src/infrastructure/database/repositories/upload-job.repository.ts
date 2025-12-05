@@ -109,6 +109,60 @@ export class UploadJobRepository extends MongoDBRepository<UploadJob> {
 
     return unprocessedUploads;
   }
+
+  /**
+   * Find upload jobs that started more than the specified hours ago and are still in progress.
+   * These are jobs that likely failed but didn't update their status.
+   * @param hoursAgo Number of hours ago to check (default: 1 hour)
+   * @param limit Maximum number of jobs to return
+   * @returns Array of stuck upload jobs
+   */
+  async findStuckUploadJobs(hoursAgo: number = 1, limit: number = 100): Promise<UploadJob[]> {
+    const cutoffTime = new Date(Date.now() - hoursAgo * 60 * 60 * 1000);
+
+    // Find jobs that:
+    // 1. Have a startedAt timestamp older than cutoffTime
+    // 2. Are still in progress (pending, uploading, converting)
+    // 3. Are not already completed or failed
+    const query = {
+      startedAt: { $exists: true, $lt: cutoffTime },
+      status: { $in: ["pending", "uploading", "converting"] },
+      completedAt: { $exists: false }, // Not already completed
+    };
+
+    const docs = await this.collection
+      .find(query)
+      .sort({ startedAt: 1 }) // Oldest first
+      .limit(limit)
+      .toArray();
+
+    return docs.map((doc: Record<string, any>) => this.toDomain(doc));
+  }
+
+  /**
+   * Mark multiple upload jobs as failed
+   * @param jobIds Array of job IDs to mark as failed
+   * @param errorMessage Optional error message to set
+   * @returns Number of jobs updated
+   */
+  async markJobsAsFailed(jobIds: string[], errorMessage: string = "Job timed out after 1 hour"): Promise<number> {
+    if (jobIds.length === 0) {
+      return 0;
+    }
+
+    const result = await this.collection.updateMany(
+      { id: { $in: jobIds } },
+      {
+        $set: {
+          status: "failed",
+          error: errorMessage,
+          completedAt: new Date(),
+        },
+      }
+    );
+
+    return result.modifiedCount;
+  }
 }
 
 

@@ -35,6 +35,7 @@ import { UpdateCustomerUseCase } from "./application/use-cases/update-customer.u
 import { DeactivateCustomerUseCase } from "./application/use-cases/deactivate-customer.use-case";
 import { ResumeIncompleteJobsUseCase } from "./application/use-cases/resume-incomplete-jobs.use-case";
 import { JobRecoveryCron } from "./infrastructure/cron/job-recovery.cron";
+import { UploadCleanupCron } from "./infrastructure/cron/upload-cleanup.cron";
 import { AudioController } from "./presentation/controllers/audio.controller";
 import { ChatController } from "./presentation/controllers/chat.controller";
 import { CustomerController } from "./presentation/controllers/customer.controller";
@@ -255,6 +256,10 @@ async function main() {
     const jobRecoveryCron = new JobRecoveryCron(resumeIncompleteJobsUseCase);
     jobRecoveryCron.start();
 
+    // Initialize and start cron job for upload cleanup
+    const uploadCleanupCron = new UploadCleanupCron(uploadJobRepository);
+    uploadCleanupCron.start();
+
     // Start server
     app.listen(config.port, () => {
       console.log(`Audio service running on port ${config.port}`);
@@ -262,8 +267,9 @@ async function main() {
       console.log(`API endpoints: http://localhost:${config.port}/api/audio`);
     });
 
-    // Store cron reference for graceful shutdown
+    // Store cron references for graceful shutdown
     (global as any).jobRecoveryCron = jobRecoveryCron;
+    (global as any).uploadCleanupCron = uploadCleanupCron;
   } catch (error) {
     console.error("Failed to start server:", error);
     process.exit(1);
@@ -276,6 +282,9 @@ process.on("SIGTERM", async () => {
   if ((global as any).jobRecoveryCron) {
     (global as any).jobRecoveryCron.stop();
   }
+  if ((global as any).uploadCleanupCron) {
+    (global as any).uploadCleanupCron.stop();
+  }
   const { closeMongoDBConnection } = await import("./infrastructure/database/mongodb.connection");
   await closeMongoDBConnection();
   process.exit(0);
@@ -285,6 +294,9 @@ process.on("SIGINT", async () => {
   console.log("SIGINT received, shutting down gracefully");
   if ((global as any).jobRecoveryCron) {
     (global as any).jobRecoveryCron.stop();
+  }
+  if ((global as any).uploadCleanupCron) {
+    (global as any).uploadCleanupCron.stop();
   }
   const { closeMongoDBConnection } = await import("./infrastructure/database/mongodb.connection");
   await closeMongoDBConnection();
