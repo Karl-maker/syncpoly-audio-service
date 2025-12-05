@@ -16,7 +16,9 @@ export interface MemoryUsage {
   totalVectorStoreRecords: number;
   vectorStoreMemoryBytes?: number; // Estimated memory for vector store
   totalAudioProcessedSeconds: number; // Total length of audio processed (transcribed) in seconds
-  totalAICreditsUsed: number; // Total AI credits used
+  totalAICreditsUsed: number; // Total AI credits used (from audio processing)
+  totalChatTokens?: number; // Total tokens used in chat interactions
+  totalChatCreditsUsed?: number; // Total credits used for chat (calculated from tokens)
   provider: string; // AI provider used (e.g., 'openai')
   processLog: ProcessLogEntry[]; // Log of all processes with dates
   lastCalculatedAt: Date;

@@ -6,6 +6,7 @@ import { ChatMessageRepository } from "../../infrastructure/database/repositorie
 import { TaskRepository } from "../../infrastructure/database/repositories/task.repository";
 import { QuestionRepository } from "../../infrastructure/database/repositories/question.repository";
 import { StructuredExtractionService } from "../services/structured-extraction.service";
+import { TokenCounterService } from "../../infrastructure/openai/token-counter.service";
 import { Task } from "../../domain/entities/task";
 import { Question } from "../../domain/entities/question";
 
@@ -177,6 +178,9 @@ export class ChatUseCase {
 
     // Collect full response for storage
     let fullResponse = "";
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let totalTokens = 0;
 
     // Stream the response
     for await (const chunk of stream) {
@@ -187,21 +191,41 @@ export class ChatUseCase {
       }
     }
 
+    // Count tokens accurately using tiktoken (OpenAI's official token counting library)
+    // Note: OpenAI streaming responses don't include usage in chunks, so we count manually
+    promptTokens = TokenCounterService.countPromptTokens(messages, "gpt-4o-mini");
+    completionTokens = TokenCounterService.countCompletionTokens(fullResponse, "gpt-4o-mini");
+    totalTokens = promptTokens + completionTokens;
+
     // Extract structured objects (tasks and questions) from response
     // We do this before saving the message so we can include the IDs
     let taskIds: string[] = [];
     let questionIds: string[] = [];
+    let extractionTokens = 0; // Track tokens used for structured extraction
+    let extractionPromptTokens = 0;
+    let extractionCompletionTokens = 0;
     
     try {
       const extracted = await this.extractAndStoreStructuredObjects(fullResponse, userId, audioFileId);
       taskIds = extracted.taskIds;
       questionIds = extracted.questionIds;
+      extractionTokens = extracted.tokens || 0;
+      extractionPromptTokens = extracted.promptTokens || 0;
+      extractionCompletionTokens = extracted.completionTokens || 0;
     } catch (error) {
       console.error("[Chat] Error extracting structured objects:", error);
       // Continue even if extraction fails - don't block the response
     }
+    
+    // Add extraction tokens to total (if any)
+    // Use actual token counts from OpenAI response
+    if (extractionTokens > 0) {
+      totalTokens += extractionTokens;
+      promptTokens += extractionPromptTokens;
+      completionTokens += extractionCompletionTokens;
+    }
 
-    // Store assistant response with task and question IDs
+    // Store assistant response with task and question IDs, and token usage
     await this.chatMessageRepository.create({
       userId,
       audioFileId: audioFileId,
@@ -209,6 +233,9 @@ export class ChatUseCase {
       content: fullResponse,
       taskIds: taskIds.length > 0 ? taskIds : undefined,
       questionIds: questionIds.length > 0 ? questionIds : undefined,
+      promptTokens: promptTokens > 0 ? promptTokens : undefined,
+      completionTokens: completionTokens > 0 ? completionTokens : undefined,
+      totalTokens: totalTokens > 0 ? totalTokens : undefined,
     });
   }
 
@@ -220,9 +247,12 @@ export class ChatUseCase {
     responseText: string,
     userId: string,
     audioFileId?: string
-  ): Promise<{ taskIds: string[]; questionIds: string[] }> {
+  ): Promise<{ taskIds: string[]; questionIds: string[]; tokens?: number; promptTokens?: number; completionTokens?: number }> {
     const taskIds: string[] = [];
     const questionIds: string[] = [];
+    let extractionTokens = 0;
+    let extractionPromptTokens = 0;
+    let extractionCompletionTokens = 0;
 
     try {
       const extracted = await this.extractionService.extractStructuredObjects(
@@ -230,6 +260,10 @@ export class ChatUseCase {
         userId,
         audioFileId
       );
+
+      extractionTokens = extracted.tokens || 0;
+      extractionPromptTokens = extracted.promptTokens || 0;
+      extractionCompletionTokens = extracted.completionTokens || 0;
 
       // Store tasks
       if (extracted.tasks.length > 0) {
@@ -269,7 +303,13 @@ export class ChatUseCase {
       // Return what we have so far
     }
 
-    return { taskIds, questionIds };
+    return { 
+      taskIds, 
+      questionIds, 
+      tokens: extractionTokens,
+      promptTokens: extractionPromptTokens,
+      completionTokens: extractionCompletionTokens
+    };
   }
 
   /**

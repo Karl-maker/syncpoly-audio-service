@@ -150,5 +150,90 @@ export class ChatMessageRepository extends MongoDBRepository<ChatMessage> {
 
     return messages;
   }
+
+  /**
+   * Get total token usage from chat messages for a user.
+   * Only counts assistant messages (which have token usage).
+   * @param userId User ID
+   * @returns Total tokens used across all chat interactions
+   */
+  async getTotalTokenUsageByUserId(userId: string): Promise<{
+    totalTokens: number;
+    promptTokens: number;
+    completionTokens: number;
+    messageCount: number;
+  }> {
+    const messages = await this.collection
+      .find({
+        userId,
+        role: "assistant",
+        totalTokens: { $exists: true, $ne: null },
+      })
+      .toArray();
+
+    let totalTokens = 0;
+    let promptTokens = 0;
+    let completionTokens = 0;
+
+    for (const msg of messages) {
+      totalTokens += msg.totalTokens || 0;
+      promptTokens += msg.promptTokens || 0;
+      completionTokens += msg.completionTokens || 0;
+    }
+
+    return {
+      totalTokens,
+      promptTokens,
+      completionTokens,
+      messageCount: messages.length,
+    };
+  }
+
+  /**
+   * Get total token usage from chat messages for a user within a date range.
+   * @param userId User ID
+   * @param startDate Start date (inclusive)
+   * @param endDate End date (inclusive)
+   * @returns Total tokens used in the period
+   */
+  async getTokenUsageByUserIdInPeriod(
+    userId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<{
+    totalTokens: number;
+    promptTokens: number;
+    completionTokens: number;
+    messageCount: number;
+  }> {
+    const messages = await this.collection
+      .find({
+        userId,
+        role: "assistant",
+        totalTokens: { $exists: true, $ne: null },
+        createdAt: {
+          $gte: startDate,
+          $lte: endDate,
+        },
+      })
+      .toArray();
+
+    let totalTokens = 0;
+    let promptTokens = 0;
+    let completionTokens = 0;
+
+    for (const msg of messages) {
+      totalTokens += msg.totalTokens || 0;
+      promptTokens += msg.promptTokens || 0;
+      completionTokens += msg.completionTokens || 0;
+    }
+
+    return {
+      totalTokens,
+      promptTokens,
+      completionTokens,
+      messageCount: messages.length,
+    };
+  }
 }
 

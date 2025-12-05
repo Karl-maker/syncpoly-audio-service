@@ -6,6 +6,9 @@ import { randomUUID } from "crypto";
 export interface ExtractedObjects {
   tasks: Task[];
   questions: Question[];
+  tokens?: number; // Total token usage from extraction API call
+  promptTokens?: number; // Prompt tokens from extraction API call
+  completionTokens?: number; // Completion tokens from extraction API call
 }
 
 export class StructuredExtractionService {
@@ -77,9 +80,14 @@ If no tasks or questions are found, return empty arrays. Only extract items that
         temperature: 0.3, // Lower temperature for more consistent extraction
       });
 
+      // Extract token usage from OpenAI response
+      const tokens = response.usage?.total_tokens || 0;
+      const promptTokens = response.usage?.prompt_tokens || 0;
+      const completionTokens = response.usage?.completion_tokens || 0;
+
       const content = response.choices[0]?.message?.content;
       if (!content) {
-        return { tasks: [], questions: [] };
+        return { tasks: [], questions: [], tokens, promptTokens, completionTokens };
       }
 
       const parsed = JSON.parse(content) as {
@@ -171,11 +179,11 @@ If no tasks or questions are found, return empty arrays. Only extract items that
           };
         });
 
-      return { tasks, questions };
+      return { tasks, questions, tokens, promptTokens, completionTokens };
     } catch (error) {
       console.error("[StructuredExtractionService] Error extracting structured objects:", error);
       // Fallback: return empty arrays on error
-      return { tasks: [], questions: [] };
+      return { tasks: [], questions: [], tokens: 0, promptTokens: 0, completionTokens: 0 };
     }
   }
 

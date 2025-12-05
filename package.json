@@ -26,7 +26,8 @@
     "node": "^20.19.6",
     "node-cron": "^3.0.3",
     "openai": "^6.9.1",
-    "stream-to-array": "^2.3.0"
+    "stream-to-array": "^2.3.0",
+    "tiktoken": "^1.0.22"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

@@ -1,11 +1,16 @@
 import { AudioFileRepository } from "../../infrastructure/database/repositories/audio-file.repository";
 import { ProcessingJobRepository } from "../../infrastructure/database/repositories/processing-job.repository";
 import { TranscriptRepository } from "../../infrastructure/database/repositories/transcript.repository";
+import { ChatMessageRepository } from "../../infrastructure/database/repositories/chat-message.repository";
 import { MemoryUsage, ProcessLogEntry } from "../../domain/entities/memory-usage";
 
 // OpenAI Whisper API pricing: $0.006 per minute
 const OPENAI_CREDITS_PER_MINUTE = 0.006;
 const OPENAI_CREDITS_PER_SECOND = OPENAI_CREDITS_PER_MINUTE / 60;
+
+// OpenAI Chat API pricing for gpt-4o-mini (per 1M tokens)
+const OPENAI_CHAT_INPUT_PRICE_PER_1M = 0.15; // $0.15 per 1M input tokens
+const OPENAI_CHAT_OUTPUT_PRICE_PER_1M = 0.60; // $0.60 per 1M output tokens
 
 export interface CalculateUsagePeriodUseCaseParams {
   userId: string;
@@ -22,7 +27,9 @@ export interface UsagePeriodResult {
   totalStorageBytes: number;
   totalAudioProcessedSeconds: number;
   totalAudioProcessedMinutes: number;
-  totalAICreditsUsed: number;
+  totalAICreditsUsed: number; // Credits from audio processing
+  totalChatTokens?: number; // Total tokens used in chat interactions
+  totalChatCreditsUsed?: number; // Credits used for chat (calculated from tokens)
   provider: string;
   processLog: ProcessLogEntry[];
   calculatedAt: Date;
@@ -32,7 +39,8 @@ export class CalculateUsagePeriodUseCase {
   constructor(
     private audioFileRepository: AudioFileRepository,
     private processingJobRepository: ProcessingJobRepository,
-    private transcriptRepository: TranscriptRepository
+    private transcriptRepository: TranscriptRepository,
+    private chatMessageRepository: ChatMessageRepository
   ) {}
 
   async execute(params: CalculateUsagePeriodUseCaseParams): Promise<UsagePeriodResult> {
@@ -130,6 +138,19 @@ export class CalculateUsagePeriodUseCase {
     // Sort process log by date (most recent first)
     processLog.sort((a, b) => b.date.getTime() - a.date.getTime());
 
+    // Calculate chat token usage for the period
+    const chatTokenUsage = await this.chatMessageRepository.getTokenUsageByUserIdInPeriod(
+      userId,
+      startDate,
+      endDate
+    );
+    
+    // Calculate chat credits used (gpt-4o-mini pricing)
+    // Input: $0.15 per 1M tokens, Output: $0.60 per 1M tokens
+    const chatInputCredits = (chatTokenUsage.promptTokens / 1_000_000) * OPENAI_CHAT_INPUT_PRICE_PER_1M;
+    const chatOutputCredits = (chatTokenUsage.completionTokens / 1_000_000) * OPENAI_CHAT_OUTPUT_PRICE_PER_1M;
+    const totalChatCreditsUsed = chatInputCredits + chatOutputCredits;
+
     return {
       userId,
       period: {
@@ -140,6 +161,8 @@ export class CalculateUsagePeriodUseCase {
       totalAudioProcessedSeconds,
       totalAudioProcessedMinutes: totalAudioProcessedSeconds / 60,
       totalAICreditsUsed,
+      totalChatTokens: chatTokenUsage.totalTokens,
+      totalChatCreditsUsed,
       provider: "openai", // Default provider
       processLog,
       calculatedAt: new Date(),

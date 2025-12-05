@@ -11,7 +11,9 @@ export interface MemoryUsageResponse {
   vectorStoreMemoryMB?: number;
   totalAudioProcessedSeconds: number;
   totalAudioProcessedMinutes: number;
-  totalAICreditsUsed: number;
+  totalAICreditsUsed: number; // Credits from audio processing
+  totalChatTokens?: number; // Total tokens used in chat interactions
+  totalChatCreditsUsed?: number; // Credits used for chat (calculated from tokens)
   provider: string;
   processLog: ProcessLogEntry[];
   lastCalculatedAt: Date;
@@ -28,7 +30,9 @@ export interface UsagePeriodResponse {
   totalStorageGB: number;
   totalAudioProcessedSeconds: number;
   totalAudioProcessedMinutes: number;
-  totalAICreditsUsed: number;
+  totalAICreditsUsed: number; // Credits from audio processing
+  totalChatTokens?: number; // Total tokens used in chat interactions
+  totalChatCreditsUsed?: number; // Credits used for chat (calculated from tokens)
   provider: string;
   processLog: ProcessLogEntry[];
   calculatedAt: Date;

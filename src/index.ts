@@ -121,12 +121,14 @@ async function main() {
     const getMemoryUsageUseCase = new GetMemoryUsageUseCase(
       audioFileRepository,
       processingJobRepository,
-      transcriptRepository
+      transcriptRepository,
+      chatMessageRepository
     );
     const calculateUsagePeriodUseCase = new CalculateUsagePeriodUseCase(
       audioFileRepository,
       processingJobRepository,
-      transcriptRepository
+      transcriptRepository,
+      chatMessageRepository
     );
     const getUploadProgressUseCase = new GetUploadProgressUseCase(uploadJobRepository);
     const getIncompleteUploadJobsUseCase = new GetIncompleteUploadJobsUseCase(uploadJobRepository);
