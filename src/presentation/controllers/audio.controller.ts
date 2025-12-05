@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from "../middleware/jwt.middleware";
 import { config } from "../../infrastructure/config/app.config";
 import { UploadAudioUseCase } from "../../application/use-cases/upload-audio.use-case";
 import { UploadVideoUseCase } from "../../application/use-cases/upload-video.use-case";
+import { UploadVideoFromUrlUseCase } from "../../application/use-cases/upload-video-from-url.use-case";
 import { ProcessAudioUseCase } from "../../application/use-cases/process-audio.use-case";
 import { GetMemoryUsageUseCase } from "../../application/use-cases/get-memory-usage.use-case";
 import { GetUploadProgressUseCase } from "../../application/use-cases/get-upload-progress.use-case";
@@ -32,6 +33,7 @@ export class AudioController {
   constructor(
     private uploadAudioUseCase: UploadAudioUseCase,
     private uploadVideoUseCase: UploadVideoUseCase,
+    private uploadVideoFromUrlUseCase: UploadVideoFromUrlUseCase,
     private processAudioUseCase: ProcessAudioUseCase,
     private getMemoryUsageUseCase: GetMemoryUsageUseCase,
     private calculateUsagePeriodUseCase: CalculateUsagePeriodUseCase,
@@ -145,6 +147,57 @@ export class AudioController {
       res.status(202).json(response);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to upload video" });
+    }
+  }
+
+  async uploadVideoFromUrl(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { url } = req.body;
+
+      if (!url || typeof url !== "string") {
+        res.status(400).json({ error: "URL is required and must be a string" });
+        return;
+      }
+
+      // Ensure region is explicitly set as a string
+      const s3Region = config.aws.region || "us-east-1";
+      if (typeof s3Region !== "string") {
+        throw new Error("Invalid AWS_REGION configuration");
+      }
+
+      const uploadJob = await this.uploadVideoFromUrlUseCase.execute({
+        url,
+        userId: req.user.userId,
+        s3Bucket: config.aws.s3Bucket,
+        cdnUrl: config.aws.cdnUrl,
+        s3Config: config.aws.accessKeyId
+          ? {
+              region: s3Region,
+              credentials: {
+                accessKeyId: config.aws.accessKeyId,
+                secretAccessKey: config.aws.secretAccessKey || "",
+              },
+              endpoint: config.aws.s3Endpoint,
+              forcePathStyle: config.aws.s3ForcePathStyle,
+            }
+          : undefined,
+      });
+
+      const response: UploadAudioResponse = {
+        jobId: uploadJob.id,
+        status: uploadJob.status,
+        message: "Video download and conversion started",
+        audioFileId: uploadJob.audioFileId,
+      };
+
+      res.status(202).json(response);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to upload video from URL" });
     }
   }
 

@@ -18,6 +18,7 @@ export interface AudioFile {
   partCount?: number; // Number of parts (for quick reference)
   videoSourceS3Bucket?: string; // Optional: S3 bucket for original video file
   videoSourceS3Key?: string; // Optional: S3 key for original video file
+  sourceUrl?: string; // Optional: URL source for videos downloaded from YouTube, TikTok, Instagram, or Facebook
   cdnUrl?: string; // Optional CDN URL for playback (first part or combined)
   audioSourceProvider: AudioSourceProvidersType;
   fileSize: number; // Total file size in bytes (sum of all parts)

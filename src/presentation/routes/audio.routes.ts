@@ -60,6 +60,12 @@ export function createAudioRoutes(
     (req, res) => audioController.uploadVideo(req as any, res)
   );
 
+  // Upload video from URL (YouTube, TikTok, Instagram, Facebook)
+  router.post(
+    "/upload/video/url",
+    (req, res) => audioController.uploadVideoFromUrl(req as any, res)
+  );
+
   // Process audio
   router.post("/process", (req, res) => audioController.processAudio(req as any, res));
 

@@ -14,6 +14,7 @@ import { CustomerRepository } from "./infrastructure/database/repositories/custo
 import { S3AudioStorage } from "./infrastructure/aws/s3.audio.storage";
 import { UploadAudioUseCase } from "./application/use-cases/upload-audio.use-case";
 import { UploadVideoUseCase } from "./application/use-cases/upload-video.use-case";
+import { UploadVideoFromUrlUseCase } from "./application/use-cases/upload-video-from-url.use-case";
 import { ProcessAudioUseCase } from "./application/use-cases/process-audio.use-case";
 import { GetMemoryUsageUseCase } from "./application/use-cases/get-memory-usage.use-case";
 import { GetUploadProgressUseCase } from "./application/use-cases/get-upload-progress.use-case";
@@ -109,6 +110,11 @@ async function main() {
       uploadJobRepository,
       s3Storage
     );
+    const uploadVideoFromUrlUseCase = new UploadVideoFromUrlUseCase(
+      audioFileRepository,
+      uploadJobRepository,
+      s3Storage
+    );
     const processAudioUseCase = new ProcessAudioUseCase(
         audioFileRepository,
         processingJobRepository,
@@ -192,6 +198,7 @@ async function main() {
     const audioController = new AudioController(
       uploadAudioUseCase,
       uploadVideoUseCase,
+      uploadVideoFromUrlUseCase,
       processAudioUseCase,
       getMemoryUsageUseCase,
       calculateUsagePeriodUseCase,
