@@ -90,12 +90,24 @@ export class MongoDBVectorStore implements IVectorStore {
       mongoFilter.userId = filter.userId;
     }
     
+    // Handle single audioFileId (backwards compatible)
     if (filter?.audioFileId) {
       mongoFilter.audioFileId = filter.audioFileId;
     }
     
+    // Handle multiple audioFileIds
+    if (filter?.audioFileIds && Array.isArray(filter.audioFileIds) && filter.audioFileIds.length > 0) {
+      mongoFilter.audioFileId = { $in: filter.audioFileIds };
+    }
+    
+    // Handle single audioSourceId (backwards compatible)
     if (filter?.audioSourceId) {
       mongoFilter["metadata.audioSourceId"] = filter.audioSourceId;
+    }
+    
+    // Handle multiple audioSourceIds
+    if (filter?.audioSourceIds && Array.isArray(filter.audioSourceIds) && filter.audioSourceIds.length > 0) {
+      mongoFilter["metadata.audioSourceId"] = { $in: filter.audioSourceIds };
     }
 
     // Fetch all matching records (for small datasets, this is fine)

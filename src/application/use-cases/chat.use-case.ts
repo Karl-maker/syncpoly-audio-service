@@ -7,13 +7,15 @@ import { TaskRepository } from "../../infrastructure/database/repositories/task.
 import { QuestionRepository } from "../../infrastructure/database/repositories/question.repository";
 import { StructuredExtractionService } from "../services/structured-extraction.service";
 import { TokenCounterService } from "../../infrastructure/openai/token-counter.service";
+import { AudioFile } from "../../domain/entities/audio-file";
 import { Task } from "../../domain/entities/task";
 import { Question } from "../../domain/entities/question";
 
 export interface ChatUseCaseParams {
   userId: string;
   message: string;
-  audioFileId?: string;
+  audioFileId?: string; // Single audio file ID (for backwards compatibility)
+  audioFileIds?: string[]; // Multiple audio file IDs
   topK?: number;
 }
 
@@ -42,45 +44,69 @@ export class ChatUseCase {
 
   async *execute(params: ChatUseCaseParams): AsyncGenerator<string | ChatUseCaseResult, void, unknown> {
     // Default topK to 10 for better results, especially when filtering
-    const { userId, message, audioFileId, topK = 10 } = params;
+    const { userId, message, audioFileId, audioFileIds, topK = 10 } = params;
 
-    // Verify audio file belongs to user if specified
-    if (audioFileId) {
-      const audioFile = await this.audioFileRepository.findById(audioFileId);
-      if (!audioFile || audioFile.userId !== userId) {
-        throw new Error("Audio file not found or unauthorized");
-      }
+    // Normalize audio file IDs: support both single audioFileId (backwards compatible) and multiple audioFileIds
+    const targetAudioFileIds: string[] = [];
+    if (audioFileIds && audioFileIds.length > 0) {
+      // Use multiple audio file IDs if provided
+      targetAudioFileIds.push(...audioFileIds);
+    } else if (audioFileId) {
+      // Fall back to single audioFileId for backwards compatibility
+      targetAudioFileIds.push(audioFileId);
     }
 
-    // Get user's audio files to build filter
-    const userAudioFiles = await this.audioFileRepository.findByUserId(userId);
+    // Efficiently fetch only the specified audio files and verify ownership
+    let targetAudioFiles: AudioFile[] = [];
+    let userAudioFiles: AudioFile[] = [];
+    
+    if (targetAudioFileIds.length > 0) {
+      // Fetch only the specified audio files by ID (more efficient)
+      targetAudioFiles = await this.audioFileRepository.findByIds(targetAudioFileIds);
+      
+      // Verify all files exist and belong to the user
+      if (targetAudioFiles.length !== targetAudioFileIds.length) {
+        const foundIds = new Set(targetAudioFiles.map(f => f.id));
+        const missingIds = targetAudioFileIds.filter(id => !foundIds.has(id));
+        throw new Error(`Audio file(s) not found: ${missingIds.join(", ")}`);
+      }
+      
+      // Verify all files belong to the user
+      for (const file of targetAudioFiles) {
+        if (file.userId !== userId) {
+          throw new Error(`Audio file ${file.id} is not authorized for this user`);
+        }
+      }
+      
+      // Use the fetched files for building audioSourceIds
+      userAudioFiles = targetAudioFiles;
+    } else {
+      // No specific files requested: fetch all user's audio files
+      userAudioFiles = await this.audioFileRepository.findByUserId(userId);
+    }
     
     // Build audioSourceId format: "bucket/key" (matches what IAudioSource.getId() returns)
-    const audioSourceIds = audioFileId
-      ? (() => {
-          const file = userAudioFiles.find((f) => f.id === audioFileId);
-          return file && file.s3Bucket && file.s3Key ? [`${file.s3Bucket}/${file.s3Key}`] : [];
-        })()
-      : userAudioFiles
-          .filter((f) => f.s3Bucket && f.s3Key)
-          .map((f) => `${f.s3Bucket}/${f.s3Key}`);
+    const audioSourceIds = userAudioFiles
+      .filter((f) => f.s3Bucket && f.s3Key)
+      .map((f) => `${f.s3Bucket}/${f.s3Key}`);
 
     if (audioSourceIds.length === 0) {
       throw new Error("No audio files found for user");
     }
 
-    // Store user message
+    // Store user message (use first audioFileId for backwards compatibility with existing schema)
     const userMessage = await this.chatMessageRepository.create({
       userId,
-      audioFileId: audioFileId,
+      audioFileId: targetAudioFileIds.length > 0 ? targetAudioFileIds[0] : undefined,
       role: "user",
       content: message,
     });
 
     // Get last 10 messages for conversation context (excluding current message)
+    // For multiple audio files, we'll search across all of them
     const conversationHistory = await this.chatMessageRepository.getConversationHistory(
       userId,
-      audioFileId,
+      targetAudioFileIds.length > 0 ? targetAudioFileIds[0] : undefined,
       10
     );
 
@@ -89,16 +115,28 @@ export class ChatUseCase {
       { id: "query", text: message },
     ]);
 
-    // Build search filter with userId (required) and optional audioFileId
+    // Build search filter with userId (required) and optional audioFileId(s)
     // Only search audio embeddings (not conversation messages)
     const searchFilter: Record<string, any> = {
       userId: userId, // Always filter by userId for security
     };
     
-    if (audioFileId && audioSourceIds.length > 0) {
-      // Filter by specific audio file
-      searchFilter.audioFileId = audioFileId;
-      searchFilter.audioSourceId = audioSourceIds[0];
+    if (targetAudioFileIds.length > 0) {
+      // Filter by specific audio file(s)
+      if (targetAudioFileIds.length === 1) {
+        // Single audio file: use both audioFileId and audioSourceId for backwards compatibility
+        searchFilter.audioFileId = targetAudioFileIds[0];
+        if (audioSourceIds.length > 0) {
+          searchFilter.audioSourceId = audioSourceIds[0];
+        }
+      } else {
+        // Multiple audio files: use $in operator for audioFileId
+        searchFilter.audioFileIds = targetAudioFileIds;
+        // Also include audioSourceIds for filtering
+        if (audioSourceIds.length > 0) {
+          searchFilter.audioSourceIds = audioSourceIds;
+        }
+      }
     }
 
     console.log(`[Chat] Searching audio vector store for query: "${message}" with filter:`, searchFilter);
@@ -116,10 +154,10 @@ export class ChatUseCase {
       // Ensure userId matches (security check)
       if (r.metadata.userId !== userId) return false;
       
-      if (audioFileId) {
-        // For specific audio file, ensure it matches
-        return r.metadata.audioFileId === audioFileId || 
-               r.metadata.audioSourceId === audioSourceIds[0];
+      if (targetAudioFileIds.length > 0) {
+        // For specific audio file(s), ensure it matches one of them
+        return targetAudioFileIds.includes(r.metadata.audioFileId) || 
+               audioSourceIds.includes(r.metadata.audioSourceId);
       } else {
         // For all user audio, ensure audioSourceId is in user's files
         return audioSourceIds.includes(r.metadata.audioSourceId);
@@ -140,7 +178,10 @@ export class ChatUseCase {
       .join("\n\n");
 
     // Build system prompt
-    const systemPrompt = this.buildSystemPrompt(audioFileId, userAudioFiles.length);
+    const systemPrompt = this.buildSystemPrompt(
+      targetAudioFileIds.length > 0 ? targetAudioFileIds : undefined,
+      userAudioFiles.length
+    );
 
     // Build messages array with conversation history
     const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
@@ -206,7 +247,9 @@ export class ChatUseCase {
     let extractionCompletionTokens = 0;
     
     try {
-      const extracted = await this.extractAndStoreStructuredObjects(fullResponse, userId, audioFileId);
+      // Use first audioFileId for structured extraction (backwards compatible)
+      const firstAudioFileId = targetAudioFileIds.length > 0 ? targetAudioFileIds[0] : undefined;
+      const extracted = await this.extractAndStoreStructuredObjects(fullResponse, userId, firstAudioFileId);
       taskIds = extracted.taskIds;
       questionIds = extracted.questionIds;
       extractionTokens = extracted.tokens || 0;
@@ -226,9 +269,10 @@ export class ChatUseCase {
     }
 
     // Store assistant response with task and question IDs, and token usage
+    // Use first audioFileId for backwards compatibility with existing schema
     await this.chatMessageRepository.create({
       userId,
-      audioFileId: audioFileId,
+      audioFileId: targetAudioFileIds.length > 0 ? targetAudioFileIds[0] : undefined,
       role: "assistant",
       content: fullResponse,
       taskIds: taskIds.length > 0 ? taskIds : undefined,
@@ -327,12 +371,30 @@ export class ChatUseCase {
     );
   }
 
-  private buildSystemPrompt(audioFileId: string | undefined, totalAudioFiles: number): string {
+  private buildSystemPrompt(audioFileIds: string[] | undefined, totalAudioFiles: number): string {
+    const audioFileId = audioFileIds && audioFileIds.length > 0 ? audioFileIds[0] : undefined;
+    const isMultipleFiles = audioFileIds && audioFileIds.length > 1;
     const memoryNote = "You have access to the conversation history, so you can reference past discussions and maintain context across the conversation.";
     const taskNote = "When appropriate, you can suggest action items, tasks, or homework based on the conversation. If the user asks for questions to test their understanding, you can generate questions (true/false, multiple choice, or short answer).";
 
     if (audioFileId) {
-      return `You are an AI assistant helping a user discuss details about a specific audio file they have uploaded and processed. 
+      if (isMultipleFiles) {
+        return `You are an AI assistant helping a user discuss details about ${audioFileIds.length} specific audio files they have uploaded and processed. 
+You have access to transcriptions and embeddings from their audio content. Use the provided context from the audio transcription 
+chunks to answer questions accurately. If the context doesn't contain relevant information, say so. ${memoryNote}
+
+Focus on:
+- Discussing the content, topics, and details mentioned across the ${audioFileIds.length} audio files
+- Answering questions about what was said, who spoke, and when across multiple files
+- Comparing or summarizing content across the different audio files if relevant
+- Providing insights based on the transcriptions
+- Being helpful and conversational
+- Remembering and referencing previous parts of the conversation
+- ${taskNote}
+
+If asked about information not in the provided context, politely indicate that you don't have that information in the current audio files.`;
+      } else {
+        return `You are an AI assistant helping a user discuss details about a specific audio file they have uploaded and processed. 
 You have access to transcriptions and embeddings from their audio content. Use the provided context from the audio transcription 
 chunks to answer questions accurately. If the context doesn't contain relevant information, say so. ${memoryNote}
 
@@ -345,6 +407,7 @@ Focus on:
 - ${taskNote}
 
 If asked about information not in the provided context, politely indicate that you don't have that information in the current audio file.`;
+      }
     } else {
       return `You are an AI assistant helping a user discuss details about their audio files. The user has ${totalAudioFiles} audio file(s) 
 that have been processed. You have access to transcriptions and embeddings from their audio content. Use the provided context from 

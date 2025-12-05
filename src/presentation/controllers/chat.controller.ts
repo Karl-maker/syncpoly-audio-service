@@ -16,7 +16,7 @@ export class ChatController {
         return;
       }
 
-      const { message, audioFileId, topK } = req.body;
+      const { message, audioFileId, audioFileIds, topK } = req.body;
 
       if (!message || typeof message !== "string") {
         res.status(400).json({ error: "message is required and must be a string" });
@@ -35,7 +35,8 @@ export class ChatController {
         for await (const chunk of this.chatUseCase.execute({
           userId: req.user.userId,
           message,
-          audioFileId,
+          audioFileId, // Backwards compatible: single audioFileId
+          audioFileIds, // New: multiple audioFileIds
           topK: topK || 10, // Default to 10 for better results
         })) {
           // Handle both string chunks and structured objects
@@ -51,10 +52,14 @@ export class ChatController {
 
         // After streaming completes, extract and send structured objects
         try {
+          // Use first audioFileId for extraction (backwards compatible)
+          const targetAudioFileId = audioFileIds && audioFileIds.length > 0 
+            ? audioFileIds[0] 
+            : audioFileId;
           const extracted = await this.chatUseCase.getExtractedObjects(
             fullResponse,
             req.user.userId,
-            audioFileId
+            targetAudioFileId
           );
           
           if (extracted.tasks.length > 0 || extracted.questions.length > 0) {

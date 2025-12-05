@@ -58,5 +58,23 @@ export class AudioFileRepository extends MongoDBRepository<AudioFile> {
     ]).toArray();
     return result[0]?.total || 0;
   }
+
+  /**
+   * Find multiple audio files by their IDs.
+   * More efficient than fetching all user files and filtering.
+   * @param audioFileIds Array of audio file IDs
+   * @returns Array of audio files
+   */
+  async findByIds(audioFileIds: string[]): Promise<AudioFile[]> {
+    if (audioFileIds.length === 0) {
+      return [];
+    }
+    
+    const docs = await this.collection
+      .find({ id: { $in: audioFileIds } })
+      .toArray();
+    
+    return docs.map((doc: Record<string, any>) => this.toDomain(doc));
+  }
 }
 

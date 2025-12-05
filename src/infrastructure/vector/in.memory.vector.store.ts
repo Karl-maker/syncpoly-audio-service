@@ -36,7 +36,31 @@ import { IVectorStore, VectorRecord, VectorSearchResult } from "../../domain/int
       filter?: Record<string, any>
     ): boolean {
       if (!filter) return true;
-      return Object.entries(filter).every(([key, val]) => metadata[key] === val);
+      
+      return Object.entries(filter).every(([key, val]) => {
+        // Handle special cases for multiple audio file IDs
+        if (key === "audioFileIds" && Array.isArray(val)) {
+          // Check if metadata.audioFileId is in the array
+          return val.includes(metadata.audioFileId);
+        }
+        
+        if (key === "audioSourceIds" && Array.isArray(val)) {
+          // Check if metadata.audioSourceId is in the array
+          return val.includes(metadata.audioSourceId);
+        }
+        
+        // Handle nested metadata keys (e.g., "metadata.audioSourceId")
+        if (key.includes(".")) {
+          const [parentKey, childKey] = key.split(".");
+          if (Array.isArray(val)) {
+            return val.includes(metadata[parentKey]?.[childKey]);
+          }
+          return metadata[parentKey]?.[childKey] === val;
+        }
+        
+        // Default: exact match
+        return metadata[key] === val;
+      });
     }
   
     private cosineSimilarity(a: number[], b: number[]): number {
