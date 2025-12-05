@@ -84,8 +84,10 @@ export class UploadAudioUseCase {
               chunkSizeBytes: 10 * 1024 * 1024, // 10MB chunks (well under OpenAI's 25MB limit)
               onProgress: async (progress: number, partIndex: number) => {
                 // Chunking is 0-30% of total progress
+                // Progress from chunking service is 0-99%, map to 0-30% of total
+                const chunkingProgress = Math.floor(progress * 0.3);
                 await this.uploadJobRepository.update(uploadJob.id, {
-                  progress: Math.floor(progress * 0.3),
+                  progress: Math.min(chunkingProgress, 29), // Cap at 29% during chunking
                 });
               },
             }
@@ -99,11 +101,21 @@ export class UploadAudioUseCase {
             console.log(`[UploadAudio] Total duration: ${totalDuration.toFixed(2)} seconds`);
           }
 
+          // Update progress to 30% when chunking is complete and upload starts
+          await this.uploadJobRepository.update(uploadJob.id, {
+            progress: 30,
+          });
+
           // Upload each 10MB chunk as a separate S3 object
           // Each part is stored independently in S3 for direct processing later
           const fileBaseKey = `users/${userId}/${randomUUID()}-${file.originalname}`;
           parts = [];
-          const uploadProgressPerPart = 70 / chunks.length; // 70% for uploads (30% chunking, 70% upload)
+          const uploadProgressPerPart = 70 / chunks.length; // 70% for uploads (30-99%)
+          
+          // Update progress to 30% when chunking is complete and upload starts
+          await this.uploadJobRepository.update(uploadJob.id, {
+            progress: 30,
+          });
 
           for (let i = 0; i < chunks.length; i++) {
             const chunk = chunks[i];
@@ -126,8 +138,11 @@ export class UploadAudioUseCase {
                   totalParts: chunks.length.toString(),
                 },
                 onProgress: async (partProgress: number) => {
-                  // Upload progress for this part: 30% + (partProgress * uploadProgressPerPart)
-                  const totalProgress = 30 + (i * uploadProgressPerPart) + (partProgress * uploadProgressPerPart / 100);
+                  // Upload progress for this part: 30% base + progress through all parts
+                  // Calculate progress through this specific part
+                  const partProgressValue = (i * uploadProgressPerPart) + (partProgress * uploadProgressPerPart / 100);
+                  const totalProgress = 30 + partProgressValue;
+                  // Cap at 99% during upload - only set to 100% when job is actually completed
                   await this.uploadJobRepository.update(uploadJob.id, {
                     progress: Math.min(Math.floor(totalProgress), 99),
                   });
@@ -200,9 +215,9 @@ export class UploadAudioUseCase {
                 originalFilename: file.originalname,
               },
               onProgress: async (progress: number) => {
-                // Update progress in database
+                // Update progress in database, cap at 99% until completion
                 await this.uploadJobRepository.update(uploadJob.id, {
-                  progress,
+                  progress: Math.min(progress, 99),
                 });
               },
             }

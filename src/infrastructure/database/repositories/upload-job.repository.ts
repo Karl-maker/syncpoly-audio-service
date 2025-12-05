@@ -70,7 +70,7 @@ export class UploadJobRepository extends MongoDBRepository<UploadJob> {
 
   /**
    * Find completed upload jobs that don't have any processing jobs.
-   * @param limit Maximum number of upload jobs to return
+   * @param limit Maximum number of upload jobs to return (after filtering)
    * @returns Array of completed upload jobs without processing jobs
    */
   async findCompletedUploadsWithoutProcessingJobs(limit: number = 50): Promise<UploadJob[]> {
@@ -79,13 +79,15 @@ export class UploadJobRepository extends MongoDBRepository<UploadJob> {
     }
 
     // Find completed upload jobs with audioFileId
+    // Use a higher limit initially to account for filtering
+    const fetchLimit = limit * 3; // Fetch 3x more to account for filtering
     const completedUploads = await this.collection
       .find({
         status: "completed",
         audioFileId: { $exists: true, $ne: null },
       })
       .sort({ completedAt: -1 }) // Most recently completed first
-      .limit(limit)
+      .limit(fetchLimit)
       .toArray();
 
     const uploadJobs = completedUploads.map((doc: Record<string, any>) => this.toDomain(doc));
@@ -94,6 +96,11 @@ export class UploadJobRepository extends MongoDBRepository<UploadJob> {
     const unprocessedUploads: UploadJob[] = [];
 
     for (const uploadJob of uploadJobs) {
+      // Stop if we've reached the desired limit
+      if (unprocessedUploads.length >= limit) {
+        break;
+      }
+
       if (!uploadJob.audioFileId) {
         continue;
       }

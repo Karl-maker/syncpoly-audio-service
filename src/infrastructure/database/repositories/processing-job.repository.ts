@@ -158,15 +158,17 @@ export class ProcessingJobRepository extends MongoDBRepository<ProcessingJob> {
   /**
    * Find incomplete jobs that are not locked (or have stale locks).
    * These are jobs that are pending, processing, or failed and can be retried.
-   * @param limit Maximum number of jobs to return
+   * @param limit Maximum number of jobs to return (after filtering)
+   * @param lockTimeoutMs Lock timeout in milliseconds (default: 5 minutes)
    * @returns Array of incomplete, unlockable jobs
    */
-  async findIncompleteUnlockedJobs(limit: number = 50): Promise<ProcessingJob[]> {
-    const defaultLockTimeout = 30 * 60 * 1000; // 5 minutes
-    const staleLockThreshold = new Date(Date.now() - defaultLockTimeout);
+  async findIncompleteUnlockedJobs(limit: number = 50, lockTimeoutMs: number = 5 * 60 * 1000): Promise<ProcessingJob[]> {
+    const staleLockThreshold = new Date(Date.now() - lockTimeoutMs);
 
     // Find jobs that are incomplete (pending, processing, or failed)
     // and either not locked, or have stale locks
+    // Use a higher limit initially to account for filtering
+    const fetchLimit = limit * 3; // Fetch 3x more to account for filtering
     const docs = await this.collection
       .find({
         status: { $in: ["pending", "processing", "failed"] },
@@ -174,13 +176,12 @@ export class ProcessingJobRepository extends MongoDBRepository<ProcessingJob> {
           // Not locked at all
           { lockedAt: { $exists: false } },
           { lockedAt: null },
-          // Lock is stale (older than default timeout)
-          // Note: We check against default timeout here, actual timeout per job is checked in acquireLock
+          // Lock is stale (older than timeout)
           { lockedAt: { $lt: staleLockThreshold } }
         ]
       })
       .sort({ updatedAt: 1 }) // Process oldest first
-      .limit(limit)
+      .limit(fetchLimit)
       .toArray();
 
     // Filter out jobs that are actually locked (with non-stale locks)
@@ -189,6 +190,11 @@ export class ProcessingJobRepository extends MongoDBRepository<ProcessingJob> {
     const unlockedJobs: ProcessingJob[] = [];
 
     for (const job of jobs) {
+      // Stop if we've reached the desired limit
+      if (unlockedJobs.length >= limit) {
+        break;
+      }
+
       // Double-check lock status (handles per-job timeout)
       const isLocked = await this.isLocked(job.id);
       if (!isLocked) {

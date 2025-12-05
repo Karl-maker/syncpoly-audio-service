@@ -1,4 +1,4 @@
-import { exec } from "child_process";
+import { exec, spawn } from "child_process";
 import { promisify } from "util";
 import { writeFile, unlink, mkdtemp } from "fs/promises";
 import { join } from "path";
@@ -122,13 +122,70 @@ export class VideoDownloadService {
 
       // Download video with best quality audio/video
       // Use format that combines best video and audio, or best available
-      const downloadCmd = `yt-dlp --no-playlist --format "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --output "${outputTemplate}" --no-warnings "${url}"`;
-      
       console.log(`[VideoDownload] Downloading from ${validation.source}: ${url}`);
       
-      // Execute download command
-      const { stdout, stderr } = await execAsync(downloadCmd, {
-        maxBuffer: 10 * 1024 * 1024, // 10MB buffer for output
+      // Use spawn to capture real-time progress output
+      await new Promise<void>((resolve, reject) => {
+        const args = [
+          "--no-playlist",
+          "--format",
+          "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+          "--output",
+          outputTemplate,
+          "--no-warnings",
+          "--newline", // Output progress on new lines
+          url,
+        ];
+
+        const downloadProcess = spawn("yt-dlp", args);
+        let lastProgress = 0;
+
+        downloadProcess.stdout.on("data", (data: Buffer) => {
+          const output = data.toString();
+          // Parse yt-dlp progress output
+          // Format: [download] 45.2% of 123.45MiB at 1.23MiB/s ETA 00:42
+          const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+          if (progressMatch) {
+            const progress = parseFloat(progressMatch[1]);
+            if (!isNaN(progress) && progress !== lastProgress) {
+              lastProgress = progress;
+              if (onProgress) {
+                onProgress(progress);
+              }
+            }
+          }
+        });
+
+        downloadProcess.stderr.on("data", (data: Buffer) => {
+          const output = data.toString();
+          // yt-dlp also outputs progress to stderr
+          const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+          if (progressMatch) {
+            const progress = parseFloat(progressMatch[1]);
+            if (!isNaN(progress) && progress !== lastProgress) {
+              lastProgress = progress;
+              if (onProgress) {
+                onProgress(progress);
+              }
+            }
+          }
+        });
+
+        downloadProcess.on("close", (code) => {
+          if (code === 0) {
+            // Ensure we report 100% completion
+            if (onProgress && lastProgress < 100) {
+              onProgress(100);
+            }
+            resolve();
+          } else {
+            reject(new Error(`yt-dlp exited with code ${code}`));
+          }
+        });
+
+        downloadProcess.on("error", (error) => {
+          reject(error);
+        });
       });
 
       // Find the downloaded file

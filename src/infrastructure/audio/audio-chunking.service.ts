@@ -116,7 +116,9 @@ export class AudioChunkingService {
             endTimeSec: endTime,
           });
 
-          options?.onProgress?.((i + 1) / totalChunks * 100, i);
+          // Report progress: (i + 1) / totalChunks, but cap at 99% to leave room for final completion
+          const chunkProgress = Math.min(((i + 1) / totalChunks * 100), 99);
+          options?.onProgress?.(chunkProgress, i);
           await unlink(outputPath).catch(() => {});
         }
       } else {
@@ -239,7 +241,9 @@ export class AudioChunkingService {
             });
           }
 
-          options?.onProgress?.((i + 1) / chunksByDuration * 100, i);
+          // Report progress: (i + 1) / totalChunks, but cap at 99% to leave room for final completion
+          const chunkProgress = Math.min(((i + 1) / chunksByDuration * 100), 99);
+          options?.onProgress?.(chunkProgress, i);
           await unlink(outputPath).catch(() => {});
         }
 
@@ -249,7 +253,8 @@ export class AudioChunkingService {
         }
       }
 
-      options?.onProgress?.(100, chunks.length - 1);
+      // Don't report 100% here - chunking is complete but upload hasn't started yet
+      // The upload phase will handle progress reporting
       return chunks;
     } catch (error: any) {
       console.error("[AudioChunkingService] Error chunking audio:", error);
