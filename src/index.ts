@@ -34,6 +34,10 @@ import { GetCustomerUseCase } from "./application/use-cases/get-customer.use-cas
 import { UpdateCustomerUseCase } from "./application/use-cases/update-customer.use-case";
 import { DeactivateCustomerUseCase } from "./application/use-cases/deactivate-customer.use-case";
 import { ResumeIncompleteJobsUseCase } from "./application/use-cases/resume-incomplete-jobs.use-case";
+import { GetQuestionsByAudioFileUseCase } from "./application/use-cases/get-questions-by-audio-file.use-case";
+import { GetTasksByAudioFileUseCase } from "./application/use-cases/get-tasks-by-audio-file.use-case";
+import { UpdateTaskStatusUseCase } from "./application/use-cases/update-task-status.use-case";
+import { DeleteTaskUseCase } from "./application/use-cases/delete-task.use-case";
 import { JobRecoveryCron } from "./infrastructure/cron/job-recovery.cron";
 import { UploadCleanupCron } from "./infrastructure/cron/upload-cleanup.cron";
 import { AudioController } from "./presentation/controllers/audio.controller";
@@ -184,6 +188,17 @@ async function main() {
       processAudioUseCase
     );
 
+    const getQuestionsByAudioFileUseCase = new GetQuestionsByAudioFileUseCase(
+      questionRepository,
+      audioFileRepository
+    );
+    const getTasksByAudioFileUseCase = new GetTasksByAudioFileUseCase(
+      taskRepository,
+      audioFileRepository
+    );
+    const updateTaskStatusUseCase = new UpdateTaskStatusUseCase(taskRepository);
+    const deleteTaskUseCase = new DeleteTaskUseCase(taskRepository);
+
     // Initialize chat use case
     const chatUseCase = new ChatUseCase(
       embeddingProvider,
@@ -215,6 +230,10 @@ async function main() {
       updateBreakdownUseCase,
       getBreakdownUseCase,
       deleteBreakdownUseCase,
+      getQuestionsByAudioFileUseCase,
+      getTasksByAudioFileUseCase,
+      updateTaskStatusUseCase,
+      deleteTaskUseCase,
       audioFileRepository,
       breakdownRepository
     );

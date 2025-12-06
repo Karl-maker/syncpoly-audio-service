@@ -112,6 +112,18 @@ export function createAudioRoutes(
   // Get chat messages by audio file ID
   router.get("/:audioFileId/chat/messages", (req, res) => chatController.getMessagesByAudioId(req as any, res));
 
+  // Get questions by audio file ID
+  router.get("/:audioFileId/questions", (req, res) => audioController.getQuestionsByAudioFile(req as any, res));
+
+  // Get tasks (action items) by audio file ID
+  router.get("/:audioFileId/tasks", (req, res) => audioController.getTasksByAudioFile(req as any, res));
+
+  // Update task status (mark as completed, etc.)
+  router.put("/task/:taskId/status", (req, res) => audioController.updateTaskStatus(req as any, res));
+
+  // Delete task
+  router.delete("/task/:taskId", (req, res) => audioController.deleteTask(req as any, res));
+
   return router;
 }
 

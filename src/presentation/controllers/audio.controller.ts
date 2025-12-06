@@ -28,6 +28,12 @@ import { ProcessingProgressResponse } from "../dto/processing-progress.dto";
 import { TranscriptResponse, toTranscriptResponse, UpdateTranscriptRequest } from "../dto/transcript.dto";
 import { Transcript } from "../../domain/entities/transcript";
 import { BreakdownResponse, toBreakdownResponse, CreateBreakdownRequest, UpdateBreakdownRequest } from "../dto/breakdown.dto";
+import { GetQuestionsByAudioFileUseCase } from "../../application/use-cases/get-questions-by-audio-file.use-case";
+import { GetTasksByAudioFileUseCase } from "../../application/use-cases/get-tasks-by-audio-file.use-case";
+import { UpdateTaskStatusUseCase } from "../../application/use-cases/update-task-status.use-case";
+import { DeleteTaskUseCase } from "../../application/use-cases/delete-task.use-case";
+import { QuestionResponse, QuestionsResponse, toQuestionResponse } from "../dto/question.dto";
+import { TaskResponse, TasksResponse, toTaskResponse, UpdateTaskStatusRequest } from "../dto/task.dto";
 
 export class AudioController {
   constructor(
@@ -48,6 +54,10 @@ export class AudioController {
     private updateBreakdownUseCase: UpdateBreakdownUseCase,
     private getBreakdownUseCase: GetBreakdownUseCase,
     private deleteBreakdownUseCase: DeleteBreakdownUseCase,
+    private getQuestionsByAudioFileUseCase: GetQuestionsByAudioFileUseCase,
+    private getTasksByAudioFileUseCase: GetTasksByAudioFileUseCase,
+    private updateTaskStatusUseCase: UpdateTaskStatusUseCase,
+    private deleteTaskUseCase: DeleteTaskUseCase,
     private audioFileRepository: AudioFileRepository,
     private breakdownRepository: BreakdownRepository
   ) {}
@@ -885,6 +895,142 @@ export class AudioController {
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to get audio files" });
+    }
+  }
+
+  async getQuestionsByAudioFile(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { audioFileId } = req.params;
+      const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+
+      const result = await this.getQuestionsByAudioFileUseCase.execute({
+        audioFileId,
+        userId: req.user.userId,
+        page,
+        limit,
+      });
+
+      const response: QuestionsResponse = {
+        questions: result.questions.map(toQuestionResponse),
+        pagination: result.pagination,
+      };
+      res.status(200).json(response);
+    } catch (error: any) {
+      if (error.message?.includes("not found")) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      if (error.message?.includes("Unauthorized")) {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      res.status(500).json({ error: error.message || "Failed to get questions" });
+    }
+  }
+
+  async getTasksByAudioFile(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { audioFileId } = req.params;
+      const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+
+      const result = await this.getTasksByAudioFileUseCase.execute({
+        audioFileId,
+        userId: req.user.userId,
+        page,
+        limit,
+      });
+
+      const response: TasksResponse = {
+        tasks: result.tasks.map(toTaskResponse),
+        pagination: result.pagination,
+      };
+      res.status(200).json(response);
+    } catch (error: any) {
+      if (error.message?.includes("not found")) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      if (error.message?.includes("Unauthorized")) {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      res.status(500).json({ error: error.message || "Failed to get tasks" });
+    }
+  }
+
+  async updateTaskStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { taskId } = req.params;
+      const { status } = req.body as UpdateTaskStatusRequest;
+
+      if (!status || !["pending", "in-progress", "completed"].includes(status)) {
+        res.status(400).json({ error: "Invalid status. Must be 'pending', 'in-progress', or 'completed'" });
+        return;
+      }
+
+      const updatedTask = await this.updateTaskStatusUseCase.execute({
+        taskId,
+        userId: req.user.userId,
+        status,
+      });
+
+      const response: TaskResponse = toTaskResponse(updatedTask);
+      res.status(200).json(response);
+    } catch (error: any) {
+      if (error.message?.includes("not found")) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      if (error.message?.includes("Unauthorized")) {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      res.status(500).json({ error: error.message || "Failed to update task status" });
+    }
+  }
+
+  async deleteTask(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { taskId } = req.params;
+
+      await this.deleteTaskUseCase.execute({
+        taskId,
+        userId: req.user.userId,
+      });
+
+      res.status(204).send();
+    } catch (error: any) {
+      if (error.message?.includes("not found")) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      if (error.message?.includes("Unauthorized")) {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      res.status(500).json({ error: error.message || "Failed to delete task" });
     }
   }
 }

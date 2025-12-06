@@ -32,5 +32,34 @@ export class QuestionRepository extends MongoDBRepository<Question> {
       .toArray();
     return docs.map((doc) => this.toDomain(doc));
   }
+
+  async findByAudioFileIdPaginated(
+    audioFileId: string,
+    page: number = 1,
+    limit: number = 10
+  ): Promise<{ questions: Question[]; total: number; page: number; limit: number; totalPages: number }> {
+    const skip = (page - 1) * limit;
+    
+    const [docs, total] = await Promise.all([
+      this.collection
+        .find({ audioFileId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      this.collection.countDocuments({ audioFileId }),
+    ]);
+    
+    const questions = docs.map((doc: Record<string, any>) => this.toDomain(doc));
+    const totalPages = Math.ceil(total / limit);
+    
+    return {
+      questions,
+      total,
+      page,
+      limit,
+      totalPages,
+    };
+  }
 }
 
