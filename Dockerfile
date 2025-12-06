@@ -24,11 +24,14 @@ RUN pnpm run build
 # Stage 2: Runtime stage
 FROM node:20-slim AS runtime
 
-# Install ffmpeg and other required system dependencies
+# Install ffmpeg, yt-dlp, and other required system dependencies
 RUN apt-get update && \
     apt-get install -y \
     ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/* && \
+    pip3 install --no-cache-dir yt-dlp
 
 # Install pnpm for production
 RUN npm install -g pnpm@10.15.0
@@ -64,10 +67,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Start the application
 CMD ["node", "dist/index.js"]
-
-
-
-
-## install yt-dlp
 
 
