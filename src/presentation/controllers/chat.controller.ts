@@ -123,5 +123,37 @@ export class ChatController {
       res.status(500).json({ error: error.message || "Failed to retrieve chat messages" });
     }
   }
+
+  async findMentions(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { term, audioFileId, audioFileIds, topK } = req.body;
+
+      if (!term || typeof term !== "string" || term.trim().length === 0) {
+        res.status(400).json({ error: "term is required and must be a non-empty string" });
+        return;
+      }
+
+      const mentions = await this.chatUseCase.findMentions({
+        userId: req.user.userId,
+        term: term.trim(),
+        audioFileId,
+        audioFileIds,
+        topK: topK || 50,
+      });
+
+      res.json(mentions);
+    } catch (error: any) {
+      if (error.message?.includes("not found") || error.message?.includes("not authorized")) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      res.status(500).json({ error: error.message || "Failed to find mentions" });
+    }
+  }
 }
 

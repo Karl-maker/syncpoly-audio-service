@@ -437,5 +437,149 @@ Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, 
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   }
+
+  /**
+   * Find when a term was mentioned in the audio files
+   * Returns mentions with timestamps, quotes, and count
+   */
+  async findMentions(params: {
+    userId: string;
+    term: string;
+    audioFileId?: string;
+    audioFileIds?: string[];
+    topK?: number;
+  }): Promise<{
+    term: string;
+    count: number;
+    mentions: Array<{
+      timestamp: number;
+      timestampFormatted: string;
+      quote: string;
+      audioFileId: string;
+      startTimeSec: number;
+      endTimeSec: number;
+    }>;
+  }> {
+    const { userId, term, audioFileId, audioFileIds, topK = 50 } = params;
+
+    // Normalize audio file IDs
+    const targetAudioFileIds: string[] = [];
+    if (audioFileIds && audioFileIds.length > 0) {
+      targetAudioFileIds.push(...audioFileIds);
+    } else if (audioFileId) {
+      targetAudioFileIds.push(audioFileId);
+    }
+
+    // Fetch and verify audio files
+    let userAudioFiles: AudioFile[] = [];
+    if (targetAudioFileIds.length > 0) {
+      const targetAudioFiles = await this.audioFileRepository.findByIds(targetAudioFileIds);
+      if (targetAudioFiles.length !== targetAudioFileIds.length) {
+        const foundIds = new Set(targetAudioFiles.map(f => f.id));
+        const missingIds = targetAudioFileIds.filter(id => !foundIds.has(id));
+        throw new Error(`Audio file(s) not found: ${missingIds.join(", ")}`);
+      }
+      for (const file of targetAudioFiles) {
+        if (file.userId !== userId) {
+          throw new Error(`Audio file ${file.id} is not authorized for this user`);
+        }
+      }
+      userAudioFiles = targetAudioFiles;
+    } else {
+      userAudioFiles = await this.audioFileRepository.findByUserId(userId);
+    }
+
+    const audioSourceIds = userAudioFiles
+      .filter((f) => f.s3Bucket && f.s3Key)
+      .map((f) => `${f.s3Bucket}/${f.s3Key}`);
+
+    if (audioSourceIds.length === 0) {
+      throw new Error("No audio files found for user");
+    }
+
+    // Build search filter
+    const searchFilter: Record<string, any> = {
+      userId: userId,
+    };
+
+    if (targetAudioFileIds.length > 0) {
+      if (targetAudioFileIds.length === 1) {
+        searchFilter.audioFileId = targetAudioFileIds[0];
+        if (audioSourceIds.length > 0) {
+          searchFilter.audioSourceId = audioSourceIds[0];
+        }
+      } else {
+        searchFilter.audioFileIds = targetAudioFileIds;
+        if (audioSourceIds.length > 0) {
+          searchFilter.audioSourceIds = audioSourceIds;
+        }
+      }
+    }
+
+    // Embed the search term
+    const [termEmbedding] = await this.embeddingProvider.embedTexts([
+      { id: "term", text: term },
+    ]);
+
+    // Search for mentions
+    const searchResults = await this.vectorStore.search(
+      termEmbedding.embedding,
+      topK,
+      searchFilter
+    );
+
+    // Minimum similarity threshold for stricter matching
+    // Cosine similarity ranges from -1 to 1, with typical relevant results around 0.1-0.3
+    // Using 0.1 to filter out completely unrelated content while still getting relevant matches
+    const MIN_SIMILARITY_THRESHOLD = 0.1;
+
+    // Filter and process results with stricter similarity threshold
+    const mentions = searchResults
+      .filter((r) => {
+        // Filter by similarity score (stricter matching)
+        if (r.score < MIN_SIMILARITY_THRESHOLD) return false;
+        
+        // Security and ownership checks
+        if (r.metadata.userId !== userId) return false;
+        if (targetAudioFileIds.length > 0) {
+          return targetAudioFileIds.includes(r.metadata.audioFileId) ||
+                 audioSourceIds.includes(r.metadata.audioSourceId);
+        }
+        return audioSourceIds.includes(r.metadata.audioSourceId);
+      })
+      .map((r) => {
+        const startTimeSec = r.metadata.startTimeSec || 0;
+        const endTimeSec = r.metadata.endTimeSec || startTimeSec;
+        const quote = r.metadata.text || "";
+        
+        return {
+          score: r.score, // Include score for sorting
+          timestamp: startTimeSec,
+          timestampFormatted: this.formatTime(startTimeSec),
+          quote: quote.trim(),
+          audioFileId: r.metadata.audioFileId || "",
+          startTimeSec,
+          endTimeSec,
+        };
+      })
+      .filter((m) => m.quote.length > 0) // Only include results with text
+      .sort((a, b) => b.score - a.score); // Sort by relevance score (most relevant first)
+
+    // Remove duplicates (same timestamp and similar quote)
+    const uniqueMentions = mentions.filter((mention, index, self) => {
+      return index === self.findIndex((m) => 
+        Math.abs(m.timestamp - mention.timestamp) < 1 && 
+        m.quote === mention.quote
+      );
+    })
+    // Remove score from final output (not part of response format)
+    .map(({ score, ...mention }) => mention);
+
+    return {
+      term,
+      count: uniqueMentions.length,
+      mentions: uniqueMentions,
+    };
+  }
 }
 
