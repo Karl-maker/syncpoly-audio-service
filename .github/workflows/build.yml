@@ -1,0 +1,80 @@
+name: Build Audio Service
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Use environment dynamically based on branch
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || github.ref == 'refs/heads/staging' && 'staging' || 'development' }}
+
+    outputs:
+      image_tag: ${{ steps.image_tag.outputs.tag }}
+      image_digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/audio-service
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Extract single image tag
+        id: image_tag
+        run: |
+          # Get the first tag from the metadata output
+          FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1 | tr -d ' ')
+          echo "tag=$FIRST_TAG" >> $GITHUB_OUTPUT
+          echo "Using image tag: $FIRST_TAG"
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  provision:
+    needs: [build]
+    uses: ./.github/workflows/provision.yml
+    with:
+      environment: ${{ github.ref == 'refs/heads/main' && 'production' || github.ref == 'refs/heads/staging' && 'staging' || 'development' }}
+    secrets:
+      # AWS Backend (S3 + DynamoDB for Terraform state)
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_STATE_BUCKET: ${{ secrets.AWS_STATE_BUCKET }}
+      AWS_LOCK_TABLE: ${{ secrets.AWS_LOCK_TABLE }}
+      AWS_STATE_BUCKET_KEY: ${{ secrets.AWS_STATE_BUCKET_KEY }}
+      # S3 Bucket
+      STATIC_S3_BUCKET_NAME: ${{ secrets.STATIC_S3_BUCKET_NAME }}

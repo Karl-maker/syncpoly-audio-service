@@ -1,0 +1,88 @@
+name: Infrastructure Provisioning
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+    secrets:
+      # AWS Backend (S3 + DynamoDB for Terraform state)
+      AWS_ACCESS_KEY_ID: 
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      AWS_REGION:
+        required: true
+      AWS_STATE_BUCKET:
+        required: true
+      AWS_LOCK_TABLE:
+        required: true
+      AWS_STATE_BUCKET_KEY:
+        required: true
+      # S3 Bucket
+      STATIC_S3_BUCKET_NAME:
+        required: true
+    outputs:
+      cdn_url:
+        description: "CDN URL from CloudFront distribution"
+        value: ${{ jobs.terraform.outputs.cdn_url }}
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      BUCKET: ${{ secrets.AWS_STATE_BUCKET }}
+      TABLE: ${{ secrets.AWS_LOCK_TABLE }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.0
+
+      - name: Setup Terraform backend (S3 + DynamoDB)
+        run: |
+          chmod +x ./bin/bootstrap_backend.sh
+          ./bin/bootstrap_backend.sh "$BUCKET" "$TABLE" "$AWS_REGION"
+
+      - name: Terraform Init
+        run: |
+          terraform -chdir=./infra/prod init \
+          -backend-config="bucket=$BUCKET" \
+          -backend-config="dynamodb_table=$TABLE" \
+          -backend-config="region=$AWS_REGION" \
+          -backend-config="key=${{ secrets.AWS_STATE_BUCKET_KEY }}"
+
+      - name: Terraform Validate
+        run: terraform -chdir=./infra/prod validate
+
+      - name: Terraform Plan
+        run: |
+          terraform -chdir=./infra/prod plan -out=tfplan \
+          -var="static_s3_bucket_name=${{ secrets.STATIC_S3_BUCKET_NAME }}"
+
+      - name: Terraform Apply
+        run: terraform -chdir=./infra/prod apply -auto-approve tfplan
+
+      - name: Extract Terraform Outputs
+        id: terraform_outputs
+        run: |
+          CDN_URL=$(terraform -chdir=./infra/prod output -raw cdn_url)
+          echo "cdn_url=$CDN_URL" >> $GITHUB_OUTPUT
+          echo "CDN URL: $CDN_URL"
+
+    outputs:
+      cdn_url: ${{ steps.terraform_outputs.outputs.cdn_url }}
