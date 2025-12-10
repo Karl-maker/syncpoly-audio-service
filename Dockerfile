@@ -31,7 +31,7 @@ RUN apt-get update && \
     python3 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/* && \
-    pip3 install --no-cache-dir yt-dlp
+    pip3 install --no-cache-dir --break-system-packages yt-dlp
 
 # Install pnpm for production
 RUN npm install -g pnpm@10.15.0
@@ -51,12 +51,11 @@ COPY --from=builder /app/dist ./dist
 # Copy any other necessary files (e.g., if you have static files, configs, etc.)
 # COPY --from=builder /app/.env.example ./.env.example  # Uncomment if needed
 
-# Create a non-root user for security
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
+# Use existing node user (UID 1000 already exists in node:20-slim)
+RUN chown -R node:node /app
 
 # Switch to non-root user
-USER appuser
+USER node
 
 # Expose the port (adjust if your app uses a different port)
 EXPOSE 3000
