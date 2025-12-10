@@ -11,10 +11,9 @@ resource "aws_cloudfront_distribution" "cdn" {
   comment             = "${var.bucket_name} CDN"
   default_root_object = var.default_root_object
 
-  origins {
-    domain_name = var.s3_bucket_domain
-    origin_id   = "s3origin-${var.bucket_name}"
-
+  origin {
+    domain_name              = var.s3_bucket_domain
+    origin_id                = "s3origin-${var.bucket_name}"
     origin_access_control_id = aws_cloudfront_origin_access_control.oac.id
   }
 
