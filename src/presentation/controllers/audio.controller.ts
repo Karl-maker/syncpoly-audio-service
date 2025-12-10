@@ -167,11 +167,19 @@ export class AudioController {
         return;
       }
 
-      const { url } = req.body;
+      const { url, sizeLimit } = req.body;
 
       if (!url || typeof url !== "string") {
         res.status(400).json({ error: "URL is required and must be a string" });
         return;
+      }
+
+      // Validate sizeLimit if provided
+      if (sizeLimit !== undefined) {
+        if (typeof sizeLimit !== "number" || sizeLimit <= 0) {
+          res.status(400).json({ error: "sizeLimit must be a positive number (duration in seconds)" });
+          return;
+        }
       }
 
       // Ensure region is explicitly set as a string
@@ -183,6 +191,7 @@ export class AudioController {
       const uploadJob = await this.uploadVideoFromUrlUseCase.execute({
         url,
         userId: req.user.userId,
+        sizeLimit,
         s3Bucket: config.aws.s3Bucket,
         cdnUrl: config.aws.cdnUrl,
         s3Config: config.aws.accessKeyId
@@ -207,6 +216,11 @@ export class AudioController {
 
       res.status(202).json(response);
     } catch (error: any) {
+      // Check if it's a validation error (size limit exceeded)
+      if (error.statusCode === 400 || error.message?.includes("exceeds the size limit")) {
+        res.status(400).json({ error: error.message || "Video exceeds the size limit" });
+        return;
+      }
       res.status(500).json({ error: error.message || "Failed to upload video from URL" });
     }
   }

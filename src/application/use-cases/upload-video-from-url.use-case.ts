@@ -13,6 +13,7 @@ import { Readable } from "stream";
 export interface UploadVideoFromUrlUseCaseParams {
   url: string;
   userId: string;
+  sizeLimit?: number; // Optional size limit in seconds (video duration)
   s3Config?: S3AudioStorageConfig;
   s3Bucket?: string;
   cdnUrl?: string; // Optional CDN URL base (e.g., "https://cdn.example.com")
@@ -53,7 +54,7 @@ export class UploadVideoFromUrlUseCase {
     } as Omit<UploadJob, "id" | "createdAt" | "updatedAt">);
 
     // Start download, upload and conversion asynchronously
-    this.uploadVideoFromUrlAsync(uploadJob, url, userId, validation.source, s3Bucket, params.cdnUrl).catch(
+    this.uploadVideoFromUrlAsync(uploadJob, url, userId, validation.source, s3Bucket, params.cdnUrl, params.sizeLimit).catch(
       async (error) => {
         console.error(`Upload job ${uploadJob.id} failed:`, error);
         await this.uploadJobRepository.update(uploadJob.id, {
@@ -73,7 +74,8 @@ export class UploadVideoFromUrlUseCase {
     userId: string,
     source: string,
     s3Bucket?: string,
-    cdnUrl?: string
+    cdnUrl?: string,
+    sizeLimit?: number
   ): Promise<void> {
     const jobId = uploadJob.id;
     let tempDir: string | undefined;
@@ -181,6 +183,15 @@ export class UploadVideoFromUrlUseCase {
       // Use duration from download if available, otherwise from conversion
       totalDuration = downloadResult.duration;
 
+      // Check size limit if provided
+      if (sizeLimit !== undefined && totalDuration !== undefined) {
+        if (totalDuration > sizeLimit) {
+          const error = new Error(`Video duration (${totalDuration.toFixed(2)}s) exceeds the size limit (${sizeLimit}s)`);
+          (error as any).statusCode = 400;
+          throw error;
+        }
+      }
+
       if (this.s3Storage && s3Bucket) {
         if (shouldChunk) {
           console.log(`[UploadVideoFromUrl] MP3 size ${mp3Buffer.length} exceeds threshold, chunking into parts`);
@@ -207,6 +218,15 @@ export class UploadVideoFromUrlUseCase {
           // Calculate total duration from chunks if not already set
           if (!totalDuration && chunks.length > 0) {
             totalDuration = chunks[chunks.length - 1].endTimeSec;
+          }
+
+          // Check size limit if provided (for chunked upload path)
+          if (sizeLimit !== undefined && totalDuration !== undefined) {
+            if (totalDuration > sizeLimit) {
+              const error = new Error(`Video duration (${totalDuration.toFixed(2)}s) exceeds the size limit (${sizeLimit}s)`);
+              (error as any).statusCode = 402;
+              throw error;
+            }
           }
 
           // Update progress to 80% when chunking is complete and upload starts
@@ -294,6 +314,15 @@ export class UploadVideoFromUrlUseCase {
               await unlink(tempFile).catch(() => {});
             } catch (error) {
               console.warn(`[UploadVideoFromUrl] Could not determine duration:`, error);
+            }
+          }
+
+          // Check size limit if provided (for single file upload path)
+          if (sizeLimit !== undefined && totalDuration !== undefined) {
+            if (totalDuration > sizeLimit) {
+              const error = new Error(`Video duration (${totalDuration.toFixed(2)}s) exceeds the size limit (${sizeLimit}s)`);
+              (error as any).statusCode = 400;
+              throw error;
             }
           }
 
