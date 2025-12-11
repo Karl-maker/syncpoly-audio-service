@@ -271,7 +271,8 @@ export class UploadAudioUseCase {
             let partCdnUrl: string | undefined;
             if (cdnUrl) {
               const cdnBase = cdnUrl.replace(/\/$/, "");
-              partCdnUrl = `${cdnBase}/${result.bucket}/${result.key}`;
+              // CDN URL format: https://cdn.example.com/key (no bucket name)
+              partCdnUrl = `${cdnBase}/${result.key}`;
             }
 
             parts.push({
@@ -323,11 +324,11 @@ export class UploadAudioUseCase {
 
       // Generate CDN URL if CDN is configured (for first part or single file)
       let generatedCdnUrl: string | undefined;
-      if (cdnUrl && s3BucketName && s3Key) {
+      if (cdnUrl && s3Key) {
         // Remove trailing slash from CDN URL if present
         const cdnBase = cdnUrl.replace(/\/$/, "");
-        // CDN URL format: https://cdn.example.com/bucket/key
-        generatedCdnUrl = `${cdnBase}/${s3BucketName}/${s3Key}`;
+        // CDN URL format: https://cdn.example.com/key (no bucket name)
+        generatedCdnUrl = `${cdnBase}/${s3Key}`;
         console.log(`[UploadAudio] Generated CDN URL: ${generatedCdnUrl}`);
       }
 

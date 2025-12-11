@@ -221,11 +221,12 @@ export class CompleteUploadAudioV2UseCase {
             },
           });
 
-          let partCdnUrl: string | undefined;
-          if (cdnUrl) {
-            const cdnBase = cdnUrl.replace(/\/$/, "");
-            partCdnUrl = `${cdnBase}/${result.bucket}/${result.key}`;
-          }
+            let partCdnUrl: string | undefined;
+            if (cdnUrl) {
+              const cdnBase = cdnUrl.replace(/\/$/, "");
+              // CDN URL format: https://cdn.example.com/key (no bucket name)
+              partCdnUrl = `${cdnBase}/${result.key}`;
+            }
 
           parts.push({
             s3Key: result.key,
@@ -334,9 +335,10 @@ export class CompleteUploadAudioV2UseCase {
 
       // Generate CDN URL if configured
       let generatedCdnUrl: string | undefined;
-      if (cdnUrl && s3BucketName && s3Key) {
+      if (cdnUrl && s3Key) {
         const cdnBase = cdnUrl.replace(/\/$/, "");
-        generatedCdnUrl = `${cdnBase}/${s3BucketName}/${s3Key}`;
+        // CDN URL format: https://cdn.example.com/key (no bucket name)
+        generatedCdnUrl = `${cdnBase}/${s3Key}`;
         console.log(`[CompleteUploadAudioV2] Generated CDN URL: ${generatedCdnUrl}`);
       }
 

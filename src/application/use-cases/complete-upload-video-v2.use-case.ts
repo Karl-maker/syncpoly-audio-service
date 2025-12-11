@@ -274,7 +274,8 @@ export class CompleteUploadVideoV2UseCase {
             let partCdnUrl: string | undefined;
             if (cdnUrl) {
               const cdnBase = cdnUrl.replace(/\/$/, "");
-              partCdnUrl = `${cdnBase}/${result.bucket}/${result.key}`;
+              // CDN URL format: https://cdn.example.com/key (no bucket name)
+              partCdnUrl = `${cdnBase}/${result.key}`;
             }
 
             parts.push({
@@ -385,11 +386,14 @@ export class CompleteUploadVideoV2UseCase {
         }
       }
 
-      // Generate CDN URL if configured
+      // Generate CDN URL if configured (use original video source if available)
       let generatedCdnUrl: string | undefined;
-      if (cdnUrl && s3BucketName && s3Key) {
+      // Prefer video source (original mp4) over audio (converted mp3)
+      const keyForCdn = videoS3Key || s3Key;
+      if (cdnUrl && keyForCdn) {
         const cdnBase = cdnUrl.replace(/\/$/, "");
-        generatedCdnUrl = `${cdnBase}/${s3BucketName}/${s3Key}`;
+        // CDN URL format: https://cdn.example.com/key (no bucket name)
+        generatedCdnUrl = `${cdnBase}/${keyForCdn}`;
         console.log(`[CompleteUploadVideoV2] Generated CDN URL: ${generatedCdnUrl}`);
       }
 

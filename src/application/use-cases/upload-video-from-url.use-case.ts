@@ -368,7 +368,8 @@ export class UploadVideoFromUrlUseCase {
             let partCdnUrl: string | undefined;
             if (cdnUrl) {
               const cdnBase = cdnUrl.replace(/\/$/, "");
-              partCdnUrl = `${cdnBase}/${result.bucket}/${result.key}`;
+              // CDN URL format: https://cdn.example.com/key (no bucket name)
+              partCdnUrl = `${cdnBase}/${result.key}`;
             }
 
             parts.push({
@@ -492,11 +493,14 @@ export class UploadVideoFromUrlUseCase {
         }
       }
 
-      // Generate CDN URL if CDN is configured
+      // Generate CDN URL if CDN is configured (use original video source if available)
       let generatedCdnUrl: string | undefined;
-      if (cdnUrl && s3BucketName && s3Key) {
+      // Prefer video source (original mp4) over audio (converted mp3)
+      const keyForCdn = videoS3Key || s3Key;
+      if (cdnUrl && keyForCdn) {
         const cdnBase = cdnUrl.replace(/\/$/, "");
-        generatedCdnUrl = `${cdnBase}/${s3BucketName}/${s3Key}`;
+        // CDN URL format: https://cdn.example.com/key (no bucket name)
+        generatedCdnUrl = `${cdnBase}/${keyForCdn}`;
       }
 
       // Update AudioFile with S3 info (if created early) or create it now

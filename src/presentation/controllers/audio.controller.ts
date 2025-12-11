@@ -909,28 +909,50 @@ export class AudioController {
       const transformedFiles = result.files.map((file) => {
         const { s3Bucket, s3Key, videoSourceS3Bucket, videoSourceS3Key, parts, ...rest } = file;
         
-        // Build URL: use CDN URL if configured, otherwise undefined
+        // Build URL: use original video source if available (e.g., mp4), otherwise use audio (mp3)
+        // Prefer videoSourceS3Key (original video) over s3Key (converted audio)
+        const keyToUse = videoSourceS3Key || s3Key;
         let url: string | undefined;
-        if (cdnUrl && s3Key) {
+        if (cdnUrl && keyToUse) {
           const cdnBase = cdnUrl.replace(/\/$/, "");
-          url = `${cdnBase}/${s3Key}`;
+          // CDN URL format: https://cdn.example.com/key (no bucket name)
+          url = `${cdnBase}/${keyToUse}`;
         } else if (file.cdnUrl) {
-          // Use existing CDN URL if available
-          url = file.cdnUrl;
+          // Use existing CDN URL if available (but remove bucket name if present)
+          const existingUrl = file.cdnUrl;
+          // Remove bucket name from existing CDN URL if it's in the format cdn/bucket/key
+          // Pattern: https://cdn.example.com/bucket/key -> https://cdn.example.com/key
+          const urlMatch = existingUrl.match(/^(https?:\/\/[^\/]+)\/([^\/]+)\/(.+)$/);
+          if (urlMatch) {
+            // URL has bucket name, remove it
+            const [, protocolAndDomain, bucket, key] = urlMatch;
+            url = `${protocolAndDomain}/${key}`;
+          } else {
+            url = existingUrl;
+          }
         }
 
         // Transform parts if they exist
         const transformedParts = parts?.map((part) => {
           const { s3Key: partKey, ...partRest } = part;
           
-          // Build part URL: use CDN URL if configured
+          // Build part URL: use CDN URL if configured (no bucket name)
           let partUrl: string | undefined;
           if (cdnUrl && partKey) {
             const cdnBase = cdnUrl.replace(/\/$/, "");
             partUrl = `${cdnBase}/${partKey}`;
           } else if (part.cdnUrl) {
-            // Use existing CDN URL if available
-            partUrl = part.cdnUrl;
+            // Use existing CDN URL if available (but remove bucket name if present)
+            const existingPartUrl = part.cdnUrl;
+            // Pattern: https://cdn.example.com/bucket/key -> https://cdn.example.com/key
+            const urlMatch = existingPartUrl.match(/^(https?:\/\/[^\/]+)\/([^\/]+)\/(.+)$/);
+            if (urlMatch) {
+              // URL has bucket name, remove it
+              const [, protocolAndDomain, bucket, key] = urlMatch;
+              partUrl = `${protocolAndDomain}/${key}`;
+            } else {
+              partUrl = existingPartUrl;
+            }
           }
 
           return {
