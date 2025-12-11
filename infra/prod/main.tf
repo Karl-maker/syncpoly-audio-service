@@ -9,13 +9,13 @@ module "s3" {
   source = "../modules/aws/s3"
   bucket_name = "syncpoly-transcibe-static-assets"
   
-  # Allow public access through bucket policies (needed for presigned URLs and CDN)
+  # Allow public access through bucket policies (needed for presigned URLs)
   block_public_policy = false
   block_public_acls = true
   ignore_public_acls = true
   restrict_public_buckets = true
   
-  # Bucket policy will be managed by CloudFront module to merge all statements
+  # Bucket policy is managed by CloudFront module to include both presigned URLs and CloudFront access
   bucket_policy = null
   
   # CORS configuration
@@ -58,8 +58,8 @@ module "cdn" {
   s3_bucket_domain = module.s3.bucket_domain
   bucket_name      = "syncpoly-transcibe-static-assets"
   
-  # Include presigned URL upload policy statement
-  additional_policy_statements = [
+  # Pass existing S3 bucket policy statements to merge with CloudFront access
+  existing_policy_statements = [
     {
       Sid    = "AllowPresignedUrlUploads"
       Effect = "Allow"

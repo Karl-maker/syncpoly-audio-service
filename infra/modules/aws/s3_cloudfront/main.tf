@@ -40,13 +40,18 @@ resource "aws_cloudfront_distribution" "cdn" {
   }
 }
 
-# Allow CloudFront OAC to read bucket and merge with additional policy statements
+# Allow CloudFront OAC to read bucket - merge with existing policy statements
+# This replaces the S3 module's bucket policy with a merged version that includes CloudFront access
 resource "aws_s3_bucket_policy" "allow_cf" {
   bucket = var.bucket_id
+  depends_on = [aws_cloudfront_distribution.cdn]
 
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = concat(
+      # Include existing policy statements (presigned URL uploads, etc.) passed from main.tf
+      var.existing_policy_statements,
+      # Add CloudFront read access
       [
         {
           Sid       = "AllowCloudFrontRead"
@@ -63,6 +68,7 @@ resource "aws_s3_bucket_policy" "allow_cf" {
           }
         }
       ],
+      # Add any additional policy statements
       var.additional_policy_statements
     )
   })
