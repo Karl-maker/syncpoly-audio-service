@@ -530,8 +530,8 @@ Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, 
 
     // Minimum similarity threshold for stricter matching
     // Cosine similarity ranges from -1 to 1, with typical relevant results around 0.1-0.3
-    // Using 0.1 to filter out completely unrelated content while still getting relevant matches
-    const MIN_SIMILARITY_THRESHOLD = 0.1;
+    // Using 0.12 to filter out less relevant content while still getting good matches
+    const MIN_SIMILARITY_THRESHOLD = 0.3;
 
     // Filter and process results with stricter similarity threshold
     const mentions = searchResults
