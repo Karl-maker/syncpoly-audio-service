@@ -237,7 +237,9 @@ export class CompleteUploadAudioV2UseCase {
 
           if (i === 0) {
             s3BucketName = result.bucket;
-            s3Key = result.key;
+            // Keep original file's key, not the first part's key
+            // The original whole file is at uploadJob.s3Key
+            s3Key = uploadJob.s3Key || result.key;
           }
         }
 
@@ -334,12 +336,14 @@ export class CompleteUploadAudioV2UseCase {
       }
 
       // Generate CDN URL if configured
+      // Always use the original whole file (uploadJob.s3Key) if available, not parts
       let generatedCdnUrl: string | undefined;
-      if (cdnUrl && s3Key) {
+      const keyForCdn = uploadJob.s3Key || s3Key; // Prefer original file over parts
+      if (cdnUrl && keyForCdn) {
         const cdnBase = cdnUrl.replace(/\/$/, "");
         // CDN URL format: https://cdn.example.com/key (no bucket name)
-        generatedCdnUrl = `${cdnBase}/${s3Key}`;
-        console.log(`[CompleteUploadAudioV2] Generated CDN URL: ${generatedCdnUrl}`);
+        generatedCdnUrl = `${cdnBase}/${keyForCdn}`;
+        console.log(`[CompleteUploadAudioV2] Generated CDN URL for original file: ${generatedCdnUrl}`);
       }
 
       // Update AudioFile with S3 info (if created early) or create it now

@@ -285,9 +285,32 @@ export class UploadAudioUseCase {
             // Set bucket and first key for backward compatibility
             if (i === 0) {
               s3BucketName = result.bucket;
-              s3Key = result.key;
+              // For direct uploads, we need to upload the whole file first
+              // Store original file key before chunking
             }
           }
+
+          // Upload the original whole file for CDN access (not just parts)
+          const originalKey = `users/${userId}/${randomUUID()}-${file.originalname}`;
+          const { Readable } = await import("stream");
+          const originalFileStream = Readable.from(file.buffer);
+          const originalResult = await this.s3Storage.storeAudio(
+            originalFileStream,
+            s3Bucket,
+            originalKey,
+            {
+              contentType: file.mimetype,
+              metadata: {
+                userId,
+                originalFilename: file.originalname,
+                type: "original",
+              },
+            }
+          );
+          
+          s3BucketName = originalResult.bucket;
+          s3Key = originalResult.key; // Use original whole file, not first part
+          console.log(`[UploadAudio] Uploaded original whole file for CDN: ${s3Key}`);
 
           console.log(`[UploadAudio] Uploaded ${parts.length} parts`);
         } else {

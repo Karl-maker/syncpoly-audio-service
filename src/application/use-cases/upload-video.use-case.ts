@@ -278,9 +278,29 @@ export class UploadVideoUseCase {
             // Set bucket and first key for backward compatibility
             if (i === 0) {
               s3BucketName = result.bucket;
-              s3Key = result.key;
             }
           }
+
+          // Upload the original whole MP3 file for CDN access (not just parts)
+          const originalMp3Key = `users/${userId}/audio/${randomUUID()}-${file.originalname.replace(/\.[^/.]+$/, "")}.mp3`;
+          const originalMp3Stream = Readable.from(mp3Buffer);
+          const originalMp3Result = await this.s3Storage.storeAudio(
+            originalMp3Stream,
+            s3Bucket,
+            originalMp3Key,
+            {
+              contentType: "audio/mpeg",
+              metadata: {
+                userId,
+                originalFilename: file.originalname,
+                type: "original",
+              },
+            }
+          );
+          
+          s3BucketName = originalMp3Result.bucket;
+          s3Key = originalMp3Result.key; // Use original whole file, not first part
+          console.log(`[UploadVideo] Uploaded original whole MP3 file for CDN: ${s3Key}`);
 
           console.log(`[UploadVideo] Uploaded ${parts.length} parts`);
         } else {

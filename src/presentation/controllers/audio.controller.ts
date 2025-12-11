@@ -909,13 +909,18 @@ export class AudioController {
       const transformedFiles = result.files.map((file) => {
         const { s3Bucket, s3Key, videoSourceS3Bucket, videoSourceS3Key, parts, ...rest } = file;
         
-        // Build URL: use original video source if available (e.g., mp4), otherwise use audio (mp3)
-        // Prefer videoSourceS3Key (original video) over s3Key (converted audio)
+        // Build URL: ALWAYS use the original whole file, NEVER use parts
+        // Priority: videoSourceS3Key (original video mp4) > s3Key (original whole file mp3/audio) > NEVER parts
+        // s3Key should point to the original whole file, not the first part
         const keyToUse = videoSourceS3Key || s3Key;
         let url: string | undefined;
         if (cdnUrl && keyToUse) {
           const cdnBase = cdnUrl.replace(/\/$/, "");
           // CDN URL format: https://cdn.example.com/key (no bucket name)
+          // Ensure we're not using a part key (parts have "-part-" in the key)
+          if (keyToUse.includes("-part-")) {
+            console.warn(`[AudioController] Warning: s3Key appears to be a part key: ${keyToUse}. This should not happen.`);
+          }
           url = `${cdnBase}/${keyToUse}`;
         } else if (file.cdnUrl) {
           // Use existing CDN URL if available (but remove bucket name if present)
