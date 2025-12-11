@@ -136,6 +136,19 @@ export class ResumeIncompleteJobsUseCase {
               continue;
             }
 
+            // Verify audio file has S3 bucket info (required for processing)
+            if (!audioFile.s3Bucket) {
+              console.log(`[ResumeIncompleteJobs] Audio file ${uploadJob.audioFileId} does not have S3 bucket set for upload job ${uploadJob.id}, skipping (upload may still be in progress)`);
+              results.push({
+                jobId: uploadJob.id,
+                status: "skipped",
+                error: "Audio file missing S3 bucket (upload may still be in progress)",
+                audioFileId: uploadJob.audioFileId,
+              });
+              skipped++;
+              continue;
+            }
+
             console.log(`[ResumeIncompleteJobs] Starting processing for upload job ${uploadJob.id}, audio file ${uploadJob.audioFileId}`);
 
             // Start processing by calling process-audio use case

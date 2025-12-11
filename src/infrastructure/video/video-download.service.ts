@@ -326,11 +326,43 @@ export class VideoDownloadService {
       const filePath = join(tempDir, downloadedFile);
 
       // Get video metadata using ffprobe
+      // Use spawn instead of execAsync to properly handle file paths with special characters
       let duration: number | undefined;
       try {
-        const probeCmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`;
-        const { stdout: durationOutput } = await execAsync(probeCmd);
-        duration = parseFloat(durationOutput.trim()) || undefined;
+        const probeArgs = [
+          "-v", "error",
+          "-show_entries", "format=duration",
+          "-of", "default=noprint_wrappers=1:nokey=1",
+          filePath, // Pass file path directly as argument, no shell interpretation
+        ];
+        
+        const probeProcess = spawn("ffprobe", probeArgs);
+        let stdout = "";
+        let stderr = "";
+        
+        probeProcess.stdout.on("data", (data: Buffer) => {
+          stdout += data.toString();
+        });
+        
+        probeProcess.stderr.on("data", (data: Buffer) => {
+          stderr += data.toString();
+        });
+        
+        await new Promise<void>((resolve, reject) => {
+          probeProcess.on("close", (code) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`ffprobe exited with code ${code}: ${stderr}`));
+            }
+          });
+          
+          probeProcess.on("error", (error) => {
+            reject(error);
+          });
+        });
+        
+        duration = parseFloat(stdout.trim()) || undefined;
       } catch (error) {
         console.warn(`[VideoDownload] Could not determine video duration:`, error);
       }
