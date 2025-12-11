@@ -85,6 +85,4 @@ jobs:
           echo "CDN URL: $CDN_URL"
 
     outputs:
-      cdn_url:
-        description: "CDN URL from CloudFront distribution"
-        value: ${{ steps.terraform_outputs.outputs.cdn_url }}
+      cdn_url: ${{ steps.terraform_outputs.outputs.cdn_url }}

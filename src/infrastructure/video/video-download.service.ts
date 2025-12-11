@@ -6,6 +6,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { Readable } from "stream";
 import { createReadStream } from "fs";
+import { S3AudioStorage } from "../aws/s3.audio.storage";
 
 const execAsync = promisify(exec);
 
@@ -22,24 +23,102 @@ export interface VideoDownloadResult {
 
 export class VideoDownloadService {
   private static readonly COOKIES_FILE_PATH = "/app/cookies/youtube_cookies.txt";
+  private static readonly S3_COOKIES_BUCKET = "syncpoly-youtube-cookies";
+  private static readonly S3_COOKIES_KEY = "cookies.txt";
+  private s3Storage?: S3AudioStorage;
+  private cookiesTempPath?: string;
+
+  constructor(s3Storage?: S3AudioStorage) {
+    this.s3Storage = s3Storage;
+  }
+
+  /**
+   * Downloads cookies from S3 if available, otherwise checks local file system
+   * @returns Path to cookies file, or undefined if not found
+   */
+  private async getCookiesFilePath(): Promise<string | undefined> {
+    // First, try to get cookies from S3
+    if (this.s3Storage) {
+      try {
+        const exists = await this.s3Storage.audioExists(
+          VideoDownloadService.S3_COOKIES_BUCKET,
+          VideoDownloadService.S3_COOKIES_KEY
+        );
+        
+        if (exists) {
+          console.log("[VideoDownload] Found cookies in S3, downloading to temp file");
+          // Download from S3 to a temp file
+          const tempDir = await mkdtemp(join(tmpdir(), "cookies-"));
+          const tempFilePath = join(tempDir, "cookies.txt");
+          
+          const stream = await this.s3Storage.getAudioStream(
+            VideoDownloadService.S3_COOKIES_BUCKET,
+            VideoDownloadService.S3_COOKIES_KEY
+          );
+          
+          // Read stream into buffer and write to file
+          const chunks: Buffer[] = [];
+          for await (const chunk of stream) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          }
+          const fileBuffer = Buffer.concat(chunks);
+          await writeFile(tempFilePath, fileBuffer);
+          
+          this.cookiesTempPath = tempFilePath;
+          console.log(`[VideoDownload] Downloaded cookies from S3 to ${tempFilePath}`);
+          return tempFilePath;
+        }
+      } catch (error) {
+        console.warn(`[VideoDownload] Error checking S3 for cookies: ${error}. Falling back to local file.`);
+      }
+    }
+    
+    // Fall back to local file system
+    try {
+      if (existsSync(VideoDownloadService.COOKIES_FILE_PATH)) {
+        console.log("[VideoDownload] Using local YouTube cookies file for yt-dlp");
+        return VideoDownloadService.COOKIES_FILE_PATH;
+      }
+    } catch (error) {
+      console.warn(`[VideoDownload] Error checking for local cookies file: ${error}.`);
+    }
+    
+    console.log("[VideoDownload] No YouTube cookies file found. Proceeding without cookies.");
+    return undefined;
+  }
 
   /**
    * Gets yt-dlp cookie arguments if the cookies file exists
    * @returns Array of cookie arguments, or empty array if file doesn't exist
    */
-  private static getCookieArgs(): string[] {
-    try {
-      if (existsSync(this.COOKIES_FILE_PATH)) {
-        console.log("[VideoDownload] Using YouTube cookies file for yt-dlp");
-        return ["--cookies", this.COOKIES_FILE_PATH];
-      } else {
-        console.log("[VideoDownload] No YouTube cookies file found. Proceeding without cookies.");
-        return [];
+  private async getCookieArgs(): Promise<string[]> {
+    const cookiesPath = await this.getCookiesFilePath();
+    if (cookiesPath) {
+      return ["--cookies", cookiesPath];
+    }
+    return [];
+  }
+
+  /**
+   * Cleans up temporary cookies file if one was created from S3
+   */
+  private async cleanupCookiesFile(): Promise<void> {
+    if (this.cookiesTempPath) {
+      try {
+        await unlink(this.cookiesTempPath);
+        // Also try to remove the temp directory
+        const { dirname } = await import("path");
+        const tempDir = dirname(this.cookiesTempPath);
+        try {
+          const { rm } = await import("fs/promises");
+          await rm(tempDir, { recursive: true, force: true });
+        } catch {
+          // Ignore errors removing directory
+        }
+        this.cookiesTempPath = undefined;
+      } catch (error) {
+        console.warn(`[VideoDownload] Error cleaning up temp cookies file: ${error}`);
       }
-    } catch (error) {
-      // If path check fails, proceed without cookies
-      console.warn(`[VideoDownload] Error checking for cookies file: ${error}. Proceeding without cookies.`);
-      return [];
     }
   }
 
@@ -124,7 +203,7 @@ export class VideoDownloadService {
       let videoId: string | undefined;
       try {
         // Get cookie arguments if cookies file exists
-        const cookieArgs = VideoDownloadService.getCookieArgs();
+        const cookieArgs = await this.getCookieArgs();
         
         // Build metadata command with optional cookies
         // Use spawn-like approach but with execAsync for simplicity
@@ -169,7 +248,7 @@ export class VideoDownloadService {
       console.log(`[VideoDownload] Downloading from ${validation.source}: ${url}`);
       
       // Get cookie arguments if cookies file exists
-      const cookieArgs = VideoDownloadService.getCookieArgs();
+      const cookieArgs = await this.getCookieArgs();
       
       // Use spawn to capture real-time progress output
       await new Promise<void>((resolve, reject) => {
@@ -261,6 +340,9 @@ export class VideoDownloadService {
 
       console.log(`[VideoDownload] Successfully downloaded: ${downloadedFile} (${duration ? duration.toFixed(2) + "s" : "unknown duration"})`);
 
+      // Clean up cookies temp file after successful download
+      await this.cleanupCookiesFile();
+
       return {
         filePath,
         filename: downloadedFile,
@@ -276,6 +358,9 @@ export class VideoDownloadService {
       } catch (cleanupError) {
         console.error(`[VideoDownload] Error cleaning up temp directory:`, cleanupError);
       }
+      
+      // Clean up cookies temp file on error
+      await this.cleanupCookiesFile();
 
       if (error.message.includes("yt-dlp is not installed")) {
         throw error;

@@ -34,7 +34,7 @@ export class UploadVideoFromUrlUseCase {
     private s3Storage?: S3AudioStorage
   ) {
     this.videoConverter = new VideoConverterService();
-    this.videoDownloader = new VideoDownloadService();
+    this.videoDownloader = new VideoDownloadService(s3Storage);
     this.chunkingService = new AudioChunkingService();
   }
 
