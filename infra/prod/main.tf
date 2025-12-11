@@ -1,21 +1,5 @@
 
-############################
-# Network (from remote state)
-############################
 
-data "terraform_remote_state" "network" {
-  backend = "s3"
-
-  config = {
-    bucket = "syncpoly-terraform-state"
-    key    = "network/terraform.tfstate"
-    region = "us-east-1"
-
-    # Only include this if the S3 backend uses access keys
-    # access_key = var.aws_access_key
-    # secret_key = var.aws_secret_key
-  }
-}
 
 ############################
 # Create s3 and get CDN domain for usage with s3
