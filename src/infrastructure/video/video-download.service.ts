@@ -1,6 +1,7 @@
 import { exec, spawn } from "child_process";
 import { promisify } from "util";
 import { writeFile, unlink, mkdtemp } from "fs/promises";
+import { existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { Readable } from "stream";
@@ -20,6 +21,28 @@ export interface VideoDownloadResult {
 }
 
 export class VideoDownloadService {
+  private static readonly COOKIES_FILE_PATH = "/app/cookies/youtube_cookies.txt";
+
+  /**
+   * Gets yt-dlp cookie arguments if the cookies file exists
+   * @returns Array of cookie arguments, or empty array if file doesn't exist
+   */
+  private static getCookieArgs(): string[] {
+    try {
+      if (existsSync(this.COOKIES_FILE_PATH)) {
+        console.log("[VideoDownload] Using YouTube cookies file for yt-dlp");
+        return ["--cookies", this.COOKIES_FILE_PATH];
+      } else {
+        console.log("[VideoDownload] No YouTube cookies file found. Proceeding without cookies.");
+        return [];
+      }
+    } catch (error) {
+      // If path check fails, proceed without cookies
+      console.warn(`[VideoDownload] Error checking for cookies file: ${error}. Proceeding without cookies.`);
+      return [];
+    }
+  }
+
   /**
    * Validates and identifies the video source from a URL
    */
@@ -100,7 +123,28 @@ export class VideoDownloadService {
       let originalTitle: string | undefined;
       let videoId: string | undefined;
       try {
-        const metadataCmd = `yt-dlp --no-playlist --dump-json --no-warnings "${url}"`;
+        // Get cookie arguments if cookies file exists
+        const cookieArgs = VideoDownloadService.getCookieArgs();
+        
+        // Build metadata command with optional cookies
+        // Use spawn-like approach but with execAsync for simplicity
+        const metadataArgs = [
+          "--no-playlist",
+          "--dump-json",
+          "--no-warnings",
+          ...cookieArgs,
+          url,
+        ];
+        
+        // Construct command string, properly escaping each argument
+        const metadataCmd = `yt-dlp ${metadataArgs.map(arg => {
+          // Escape quotes and special characters in arguments
+          if (arg.includes(" ") || arg.includes('"') || arg.includes("'")) {
+            return `"${arg.replace(/"/g, '\\"')}"`;
+          }
+          return arg;
+        }).join(" ")}`;
+        
         const { stdout: metadataOutput } = await execAsync(metadataCmd, {
           maxBuffer: 10 * 1024 * 1024,
         });
@@ -124,6 +168,9 @@ export class VideoDownloadService {
       // Use format that combines best video and audio, or best available
       console.log(`[VideoDownload] Downloading from ${validation.source}: ${url}`);
       
+      // Get cookie arguments if cookies file exists
+      const cookieArgs = VideoDownloadService.getCookieArgs();
+      
       // Use spawn to capture real-time progress output
       await new Promise<void>((resolve, reject) => {
         const args = [
@@ -134,6 +181,7 @@ export class VideoDownloadService {
           outputTemplate,
           "--no-warnings",
           "--newline", // Output progress on new lines
+          ...cookieArgs, // Add cookies args if file exists
           url,
         ];
 
