@@ -39,7 +39,7 @@ module "s3" {
     {
       allowed_headers = ["*"]
       allowed_methods = ["GET", "PUT", "POST", "HEAD"]
-      allowed_origins = ["transcribe.syncpoly.com"]
+      allowed_origins = ["https://transcribe.syncpoly.com"]
       expose_headers  = ["ETag", "Content-Length"]
       max_age_seconds = 3000
     }
