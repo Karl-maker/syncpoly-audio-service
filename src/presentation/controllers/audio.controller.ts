@@ -987,6 +987,109 @@ export class AudioController {
     }
   }
 
+  async getAudioFileById(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { id } = req.params;
+
+      // Get audio file by ID
+      const audioFile = await this.audioFileRepository.findById(id);
+      if (!audioFile) {
+        res.status(404).json({ error: "Audio file not found" });
+        return;
+      }
+
+      // Verify the audio file belongs to the authenticated user
+      if (audioFile.userId !== req.user.userId) {
+        res.status(403).json({ error: "Unauthorized: Audio file does not belong to user" });
+        return;
+      }
+
+      // Transform audio file to hide S3 bucket info and add CDN URL
+      const cdnUrl = config.aws.cdnUrl;
+      const { s3Bucket, s3Key, videoSourceS3Bucket, videoSourceS3Key, parts, ...rest } = audioFile;
+      
+      // Build URL: ALWAYS use the original whole file, NEVER use parts
+      // Priority: videoSourceS3Key (original video mp4) > s3Key (original whole file mp3/audio) > NEVER parts
+      const keyToUse = videoSourceS3Key || s3Key;
+      let url: string | undefined;
+      if (cdnUrl && keyToUse) {
+        const cdnBase = cdnUrl.replace(/\/$/, "");
+        // CDN URL format: https://cdn.example.com/key (no bucket name)
+        // Ensure we're not using a part key (parts have "-part-" in the key)
+        if (keyToUse.includes("-part-")) {
+          console.warn(`[AudioController] Warning: s3Key appears to be a part key: ${keyToUse}. This should not happen.`);
+        }
+        url = `${cdnBase}/${keyToUse}`;
+      } else if (audioFile.cdnUrl) {
+        // Use existing CDN URL if available (but remove bucket name if present)
+        const existingUrl = audioFile.cdnUrl;
+        // Remove bucket name from existing CDN URL if it's in the format cdn/bucket/key
+        // Pattern: https://cdn.example.com/bucket/key -> https://cdn.example.com/key
+        const urlMatch = existingUrl.match(/^(https?:\/\/[^\/]+)\/([^\/]+)\/(.+)$/);
+        if (urlMatch) {
+          // URL has bucket name, remove it
+          const [, protocolAndDomain, bucket, key] = urlMatch;
+          url = `${protocolAndDomain}/${key}`;
+        } else {
+          url = existingUrl;
+        }
+      }
+
+      // Transform parts if they exist
+      const transformedParts = parts?.map((part) => {
+        const { s3Key: partKey, ...partRest } = part;
+        
+        // Build part URL: use CDN URL if configured (no bucket name)
+        let partUrl: string | undefined;
+        if (cdnUrl && partKey) {
+          const cdnBase = cdnUrl.replace(/\/$/, "");
+          partUrl = `${cdnBase}/${partKey}`;
+        } else if (part.cdnUrl) {
+          // Use existing CDN URL if available (but remove bucket name if present)
+          const existingPartUrl = part.cdnUrl;
+          // Pattern: https://cdn.example.com/bucket/key -> https://cdn.example.com/key
+          const urlMatch = existingPartUrl.match(/^(https?:\/\/[^\/]+)\/([^\/]+)\/(.+)$/);
+          if (urlMatch) {
+            // URL has bucket name, remove it
+            const [, protocolAndDomain, bucket, key] = urlMatch;
+            partUrl = `${protocolAndDomain}/${key}`;
+          } else {
+            partUrl = existingPartUrl;
+          }
+        }
+
+        return {
+          ...partRest,
+          url: partUrl,
+        };
+      });
+
+      const response = {
+        ...rest,
+        url, // CDN URL for the original whole file
+        cdnUrl: url, // Also include as cdnUrl for backward compatibility
+        ...(transformedParts && { parts: transformedParts }),
+      };
+
+      res.status(200).json(response);
+    } catch (error: any) {
+      if (error.message?.includes("not found")) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      if (error.message?.includes("Unauthorized")) {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      res.status(500).json({ error: error.message || "Failed to get audio file" });
+    }
+  }
+
   async getQuestionsByAudioFile(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       if (!req.user) {

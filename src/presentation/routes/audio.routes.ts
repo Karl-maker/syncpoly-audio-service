@@ -46,6 +46,9 @@ export function createAudioRoutes(
   // Get all audio files for the authenticated user
   router.get("/", (req, res) => audioController.getAudioFiles(req as any, res));
 
+  // Get audio file by ID (must be before other :audioFileId routes to avoid conflicts)
+  router.get("/:id", (req, res) => audioController.getAudioFileById(req as any, res));
+
   // Upload audio file
   router.post(
     "/upload",
