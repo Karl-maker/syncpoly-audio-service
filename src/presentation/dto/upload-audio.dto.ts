@@ -9,3 +9,23 @@ export interface UploadAudioResponse {
   audioFileId?: string;
 }
 
+export interface InitUploadV2Request {
+  filename: string;
+  contentType: string;
+  fileSize?: number;
+}
+
+export interface InitUploadV2Response {
+  jobId: string;
+  uploadUrl: string;
+  s3Key: string;
+  s3Bucket: string;
+  expiresIn: number;
+  status: "pending";
+  message: string;
+}
+
+export interface CompleteUploadV2Request {
+  jobId: string;
+}
+

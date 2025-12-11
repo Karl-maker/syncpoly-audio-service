@@ -6,6 +6,7 @@ import {
   AbortMultipartUploadCommand,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Readable } from "stream";
 
 // Multipart upload threshold: use multipart for files larger than 5MB
@@ -418,6 +419,122 @@ export class S3AudioStorage {
       }
       throw error;
     }
+  }
+
+  /**
+   * Generate a presigned URL for uploading a file directly to S3.
+   * 
+   * @param bucket - S3 bucket name
+   * @param key - S3 object key
+   * @param options - Optional content type, metadata, and expiration time
+   * @returns Presigned URL for PUT request
+   */
+  async getPresignedUploadUrl(
+    bucket: string,
+    key: string,
+    options?: {
+      contentType?: string;
+      metadata?: Record<string, string>;
+      expiresIn?: number; // Expiration time in seconds (default: 3600 = 1 hour)
+    }
+  ): Promise<string> {
+    const command = new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ContentType: options?.contentType || this.defaultContentType,
+      Metadata: options?.metadata,
+    });
+
+    const expiresIn = options?.expiresIn || 3600; // Default 1 hour
+
+    // Type assertion to fix compatibility issue with getSignedUrl
+    return await getSignedUrl(this.s3Client as any, command, { expiresIn });
+  }
+
+  /**
+   * Get a file from S3 as a readable stream.
+   * 
+   * @param bucket - S3 bucket name
+   * @param key - S3 object key
+   * @returns Readable stream of the file
+   */
+  async getAudioStream(bucket: string, key: string): Promise<Readable> {
+    const { GetObjectCommand } = await import("@aws-sdk/client-s3");
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    });
+
+    const response = await this.s3Client.send(command);
+    
+    if (!response.Body) {
+      throw new Error(`File not found: ${bucket}/${key}`);
+    }
+
+    // AWS SDK v3 returns Body as a stream-like object
+    // Convert to Node.js Readable stream
+    if (response.Body instanceof Readable) {
+      return response.Body;
+    }
+    
+    // For other types, read as async iterable and convert to Readable
+    const stream = new Readable({
+      read() {
+        // This will be populated by the async iterator
+      },
+    });
+    
+    // Read the body as async iterable and push to stream
+    (async () => {
+      try {
+        // AWS SDK v3 Body is typically an async iterable
+        if (response.Body && typeof (response.Body as any)[Symbol.asyncIterator] === 'function') {
+          for await (const chunk of response.Body as any) {
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            stream.push(buffer);
+          }
+          stream.push(null);
+        } else {
+          // Fallback: treat as single buffer
+          const buffer = Buffer.isBuffer(response.Body) 
+            ? response.Body 
+            : Buffer.from(response.Body as any);
+          stream.push(buffer);
+          stream.push(null);
+        }
+      } catch (error) {
+        stream.destroy(error as Error);
+      }
+    })();
+    
+    return stream;
+  }
+
+  /**
+   * Get file metadata from S3.
+   * 
+   * @param bucket - S3 bucket name
+   * @param key - S3 object key
+   * @returns File metadata including size and content type
+   */
+  async getFileMetadata(bucket: string, key: string): Promise<{
+    size: number;
+    contentType?: string;
+    metadata?: Record<string, string>;
+  }> {
+    const { HeadObjectCommand } = await import("@aws-sdk/client-s3");
+    const command = new HeadObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    });
+
+    const response = await this.s3Client.send(command);
+    
+    return {
+      size: response.ContentLength || 0,
+      contentType: response.ContentType,
+      metadata: response.Metadata,
+    };
   }
 }
 

@@ -15,6 +15,9 @@ import { S3AudioStorage } from "./infrastructure/aws/s3.audio.storage";
 import { UploadAudioUseCase } from "./application/use-cases/upload-audio.use-case";
 import { UploadVideoUseCase } from "./application/use-cases/upload-video.use-case";
 import { UploadVideoFromUrlUseCase } from "./application/use-cases/upload-video-from-url.use-case";
+import { InitUploadV2UseCase } from "./application/use-cases/init-upload-v2.use-case";
+import { CompleteUploadAudioV2UseCase } from "./application/use-cases/complete-upload-audio-v2.use-case";
+import { CompleteUploadVideoV2UseCase } from "./application/use-cases/complete-upload-video-v2.use-case";
 import { ProcessAudioUseCase } from "./application/use-cases/process-audio.use-case";
 import { GetMemoryUsageUseCase } from "./application/use-cases/get-memory-usage.use-case";
 import { GetUploadProgressUseCase } from "./application/use-cases/get-upload-progress.use-case";
@@ -202,6 +205,24 @@ async function main() {
     const updateTaskStatusUseCase = new UpdateTaskStatusUseCase(taskRepository);
     const deleteTaskUseCase = new DeleteTaskUseCase(taskRepository);
 
+    // Initialize v2 upload use cases (presigned URLs)
+    const initUploadV2UseCase = new InitUploadV2UseCase(
+      uploadJobRepository,
+      s3Storage
+    );
+    const completeUploadAudioV2UseCase = new CompleteUploadAudioV2UseCase(
+      audioFileRepository,
+      uploadJobRepository,
+      processingJobRepository,
+      s3Storage
+    );
+    const completeUploadVideoV2UseCase = new CompleteUploadVideoV2UseCase(
+      audioFileRepository,
+      uploadJobRepository,
+      processingJobRepository,
+      s3Storage
+    );
+
     // Initialize chat use case
     const chatUseCase = new ChatUseCase(
       embeddingProvider,
@@ -237,6 +258,9 @@ async function main() {
       getTasksByAudioFileUseCase,
       updateTaskStatusUseCase,
       deleteTaskUseCase,
+      initUploadV2UseCase,
+      completeUploadAudioV2UseCase,
+      completeUploadVideoV2UseCase,
       audioFileRepository,
       breakdownRepository
     );

@@ -19,7 +19,7 @@ import { GetBreakdownUseCase } from "../../application/use-cases/get-breakdown.u
 import { DeleteBreakdownUseCase } from "../../application/use-cases/delete-breakdown.use-case";
 import { AudioFileRepository } from "../../infrastructure/database/repositories/audio-file.repository";
 import { BreakdownRepository } from "../../infrastructure/database/repositories/breakdown.repository";
-import { UploadAudioResponse } from "../dto/upload-audio.dto";
+import { UploadAudioResponse, InitUploadV2Request, InitUploadV2Response, CompleteUploadV2Request } from "../dto/upload-audio.dto";
 import { ProcessAudioRequest, ProcessAudioResponse } from "../dto/process-audio.dto";
 import { MemoryUsageResponse, UsagePeriodResponse } from "../dto/memory-usage.dto";
 import { CalculateUsagePeriodUseCase } from "../../application/use-cases/calculate-usage-period.use-case";
@@ -34,6 +34,9 @@ import { UpdateTaskStatusUseCase } from "../../application/use-cases/update-task
 import { DeleteTaskUseCase } from "../../application/use-cases/delete-task.use-case";
 import { QuestionResponse, QuestionsResponse, toQuestionResponse } from "../dto/question.dto";
 import { TaskResponse, TasksResponse, toTaskResponse, UpdateTaskStatusRequest } from "../dto/task.dto";
+import { InitUploadV2UseCase } from "../../application/use-cases/init-upload-v2.use-case";
+import { CompleteUploadAudioV2UseCase } from "../../application/use-cases/complete-upload-audio-v2.use-case";
+import { CompleteUploadVideoV2UseCase } from "../../application/use-cases/complete-upload-video-v2.use-case";
 
 export class AudioController {
   constructor(
@@ -58,6 +61,9 @@ export class AudioController {
     private getTasksByAudioFileUseCase: GetTasksByAudioFileUseCase,
     private updateTaskStatusUseCase: UpdateTaskStatusUseCase,
     private deleteTaskUseCase: DeleteTaskUseCase,
+    private initUploadV2UseCase: InitUploadV2UseCase,
+    private completeUploadAudioV2UseCase: CompleteUploadAudioV2UseCase,
+    private completeUploadVideoV2UseCase: CompleteUploadVideoV2UseCase,
     private audioFileRepository: AudioFileRepository,
     private breakdownRepository: BreakdownRepository
   ) {}
@@ -1045,6 +1051,195 @@ export class AudioController {
         return;
       }
       res.status(500).json({ error: error.message || "Failed to delete task" });
+    }
+  }
+
+  // V2 Upload Endpoints (using S3 presigned URLs)
+
+  /**
+   * Initialize upload (v2) - Returns presigned URL for direct S3 upload
+   */
+  async initUploadV2(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { filename, contentType, fileSize } = req.body as InitUploadV2Request;
+
+      if (!filename || typeof filename !== "string") {
+        res.status(400).json({ error: "filename is required and must be a string" });
+        return;
+      }
+
+      if (!contentType || typeof contentType !== "string") {
+        res.status(400).json({ error: "contentType is required and must be a string" });
+        return;
+      }
+
+      // Validate content type
+      const isAudio = contentType.startsWith("audio/");
+      const isVideo = contentType.startsWith("video/");
+      if (!isAudio && !isVideo) {
+        res.status(400).json({ error: "contentType must be audio/* or video/*" });
+        return;
+      }
+
+      // Ensure region is explicitly set as a string
+      const s3Region = config.aws.region || "us-east-1";
+      if (typeof s3Region !== "string") {
+        throw new Error("Invalid AWS_REGION configuration");
+      }
+
+      const result = await this.initUploadV2UseCase.execute({
+        filename,
+        contentType,
+        fileSize: fileSize ? parseInt(fileSize as any, 10) : undefined,
+        userId: req.user.userId,
+        s3Bucket: config.aws.s3Bucket,
+        s3Config: config.aws.accessKeyId
+          ? {
+              region: s3Region,
+              credentials: {
+                accessKeyId: config.aws.accessKeyId,
+                secretAccessKey: config.aws.secretAccessKey || "",
+              },
+              endpoint: config.aws.s3Endpoint,
+              forcePathStyle: config.aws.s3ForcePathStyle,
+            }
+          : undefined,
+      });
+
+      const response: InitUploadV2Response = {
+        jobId: result.jobId,
+        uploadUrl: result.uploadUrl,
+        s3Key: result.s3Key,
+        s3Bucket: result.s3Bucket,
+        expiresIn: result.expiresIn,
+        status: "pending",
+        message: "Upload URL generated. Upload file to the provided URL, then call complete endpoint.",
+      };
+
+      res.status(200).json(response);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to initialize upload" });
+    }
+  }
+
+  /**
+   * Complete audio upload (v2) - Processes file uploaded to S3 via presigned URL
+   */
+  async completeUploadAudioV2(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { jobId } = req.body as CompleteUploadV2Request;
+
+      if (!jobId || typeof jobId !== "string") {
+        res.status(400).json({ error: "jobId is required and must be a string" });
+        return;
+      }
+
+      // Ensure region is explicitly set as a string
+      const s3Region = config.aws.region || "us-east-1";
+      if (typeof s3Region !== "string") {
+        throw new Error("Invalid AWS_REGION configuration");
+      }
+
+      const uploadJob = await this.completeUploadAudioV2UseCase.execute({
+        jobId,
+        userId: req.user.userId,
+        s3Bucket: config.aws.s3Bucket,
+        cdnUrl: config.aws.cdnUrl,
+        s3Config: config.aws.accessKeyId
+          ? {
+              region: s3Region,
+              credentials: {
+                accessKeyId: config.aws.accessKeyId,
+                secretAccessKey: config.aws.secretAccessKey || "",
+              },
+              endpoint: config.aws.s3Endpoint,
+              forcePathStyle: config.aws.s3ForcePathStyle,
+            }
+          : undefined,
+      });
+
+      const response: UploadAudioResponse = {
+        jobId: uploadJob.id,
+        status: uploadJob.status,
+        message: "Upload processing started",
+        audioFileId: uploadJob.audioFileId,
+      };
+
+      res.status(202).json(response);
+    } catch (error: any) {
+      if (error.message?.includes("not found") || error.message?.includes("Unauthorized")) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      res.status(500).json({ error: error.message || "Failed to complete upload" });
+    }
+  }
+
+  /**
+   * Complete video upload (v2) - Processes video uploaded to S3 via presigned URL
+   */
+  async completeUploadVideoV2(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { jobId } = req.body as CompleteUploadV2Request;
+
+      if (!jobId || typeof jobId !== "string") {
+        res.status(400).json({ error: "jobId is required and must be a string" });
+        return;
+      }
+
+      // Ensure region is explicitly set as a string
+      const s3Region = config.aws.region || "us-east-1";
+      if (typeof s3Region !== "string") {
+        throw new Error("Invalid AWS_REGION configuration");
+      }
+
+      const uploadJob = await this.completeUploadVideoV2UseCase.execute({
+        jobId,
+        userId: req.user.userId,
+        s3Bucket: config.aws.s3Bucket,
+        cdnUrl: config.aws.cdnUrl,
+        s3Config: config.aws.accessKeyId
+          ? {
+              region: s3Region,
+              credentials: {
+                accessKeyId: config.aws.accessKeyId,
+                secretAccessKey: config.aws.secretAccessKey || "",
+              },
+              endpoint: config.aws.s3Endpoint,
+              forcePathStyle: config.aws.s3ForcePathStyle,
+            }
+          : undefined,
+      });
+
+      const response: UploadAudioResponse = {
+        jobId: uploadJob.id,
+        status: uploadJob.status,
+        message: "Video upload and conversion started",
+        audioFileId: uploadJob.audioFileId,
+      };
+
+      res.status(202).json(response);
+    } catch (error: any) {
+      if (error.message?.includes("not found") || error.message?.includes("Unauthorized")) {
+        res.status(404).json({ error: error.message });
+        return;
+      }
+      res.status(500).json({ error: error.message || "Failed to complete video upload" });
     }
   }
 }

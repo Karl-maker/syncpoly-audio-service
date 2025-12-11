@@ -66,6 +66,16 @@ export function createAudioRoutes(
     (req, res) => audioController.uploadVideoFromUrl(req as any, res)
   );
 
+  // V2 Upload endpoints (using S3 presigned URLs)
+  // Initialize upload - returns presigned URL
+  router.post("/v2/upload/init", (req, res) => audioController.initUploadV2(req as any, res));
+  
+  // Complete audio upload after client uploads to S3
+  router.post("/v2/upload/audio/complete", (req, res) => audioController.completeUploadAudioV2(req as any, res));
+  
+  // Complete video upload after client uploads to S3
+  router.post("/v2/upload/video/complete", (req, res) => audioController.completeUploadVideoV2(req as any, res));
+
   // Process audio
   router.post("/process", (req, res) => audioController.processAudio(req as any, res));
 
