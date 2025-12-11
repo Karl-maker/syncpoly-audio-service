@@ -904,8 +904,50 @@ export class AudioController {
         validLimit
       );
 
+      // Transform audio files to hide S3 bucket info and add CDN URLs
+      const cdnUrl = config.aws.cdnUrl;
+      const transformedFiles = result.files.map((file) => {
+        const { s3Bucket, s3Key, videoSourceS3Bucket, videoSourceS3Key, parts, ...rest } = file;
+        
+        // Build URL: use CDN URL if configured, otherwise undefined
+        let url: string | undefined;
+        if (cdnUrl && s3Key) {
+          const cdnBase = cdnUrl.replace(/\/$/, "");
+          url = `${cdnBase}/${s3Key}`;
+        } else if (file.cdnUrl) {
+          // Use existing CDN URL if available
+          url = file.cdnUrl;
+        }
+
+        // Transform parts if they exist
+        const transformedParts = parts?.map((part) => {
+          const { s3Key: partKey, ...partRest } = part;
+          
+          // Build part URL: use CDN URL if configured
+          let partUrl: string | undefined;
+          if (cdnUrl && partKey) {
+            const cdnBase = cdnUrl.replace(/\/$/, "");
+            partUrl = `${cdnBase}/${partKey}`;
+          } else if (part.cdnUrl) {
+            // Use existing CDN URL if available
+            partUrl = part.cdnUrl;
+          }
+
+          return {
+            ...partRest,
+            url: partUrl,
+          };
+        });
+
+        return {
+          ...rest,
+          url,
+          ...(transformedParts && { parts: transformedParts }),
+        };
+      });
+
       res.status(200).json({
-        audioFiles: result.files,
+        audioFiles: transformedFiles,
         pagination: {
           total: result.total,
           totalPages: result.totalPages,
