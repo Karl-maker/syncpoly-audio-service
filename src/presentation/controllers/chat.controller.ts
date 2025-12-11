@@ -131,7 +131,7 @@ export class ChatController {
         return;
       }
 
-      const { term, audioFileId, audioFileIds, topK } = req.body;
+      const { term, audioFileId, audioFileIds, topK, all } = req.body;
 
       if (!term || typeof term !== "string" || term.trim().length === 0) {
         res.status(400).json({ error: "term is required and must be a non-empty string" });
@@ -144,6 +144,7 @@ export class ChatController {
         audioFileId,
         audioFileIds,
         topK: topK || 50,
+        all: all === true, // Default to false if not provided
       });
 
       res.json(mentions);

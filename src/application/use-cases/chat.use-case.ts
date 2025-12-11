@@ -448,6 +448,7 @@ Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, 
     audioFileId?: string;
     audioFileIds?: string[];
     topK?: number;
+    all?: boolean;
   }): Promise<{
     term: string;
     count: number;
@@ -460,33 +461,39 @@ Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, 
       endTimeSec: number;
     }>;
   }> {
-    const { userId, term, audioFileId, audioFileIds, topK = 50 } = params;
-
-    // Normalize audio file IDs
-    const targetAudioFileIds: string[] = [];
-    if (audioFileIds && audioFileIds.length > 0) {
-      targetAudioFileIds.push(...audioFileIds);
-    } else if (audioFileId) {
-      targetAudioFileIds.push(audioFileId);
-    }
+    const { userId, term, audioFileId, audioFileIds, topK = 50, all = false } = params;
 
     // Fetch and verify audio files
     let userAudioFiles: AudioFile[] = [];
-    if (targetAudioFileIds.length > 0) {
-      const targetAudioFiles = await this.audioFileRepository.findByIds(targetAudioFileIds);
-      if (targetAudioFiles.length !== targetAudioFileIds.length) {
-        const foundIds = new Set(targetAudioFiles.map(f => f.id));
-        const missingIds = targetAudioFileIds.filter(id => !foundIds.has(id));
-        throw new Error(`Audio file(s) not found: ${missingIds.join(", ")}`);
-      }
-      for (const file of targetAudioFiles) {
-        if (file.userId !== userId) {
-          throw new Error(`Audio file ${file.id} is not authorized for this user`);
-        }
-      }
-      userAudioFiles = targetAudioFiles;
-    } else {
+    let targetAudioFileIds: string[] = [];
+
+    if (all) {
+      // When all=true, search across all user's audio files (ignore audioFileId/audioFileIds)
       userAudioFiles = await this.audioFileRepository.findByUserId(userId);
+    } else {
+      // Normalize audio file IDs when all=false
+      if (audioFileIds && audioFileIds.length > 0) {
+        targetAudioFileIds.push(...audioFileIds);
+      } else if (audioFileId) {
+        targetAudioFileIds.push(audioFileId);
+      }
+
+      if (targetAudioFileIds.length > 0) {
+        const targetAudioFiles = await this.audioFileRepository.findByIds(targetAudioFileIds);
+        if (targetAudioFiles.length !== targetAudioFileIds.length) {
+          const foundIds = new Set(targetAudioFiles.map(f => f.id));
+          const missingIds = targetAudioFileIds.filter(id => !foundIds.has(id));
+          throw new Error(`Audio file(s) not found: ${missingIds.join(", ")}`);
+        }
+        for (const file of targetAudioFiles) {
+          if (file.userId !== userId) {
+            throw new Error(`Audio file ${file.id} is not authorized for this user`);
+          }
+        }
+        userAudioFiles = targetAudioFiles;
+      } else {
+        userAudioFiles = await this.audioFileRepository.findByUserId(userId);
+      }
     }
 
     const audioSourceIds = userAudioFiles
@@ -502,7 +509,8 @@ Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, 
       userId: userId,
     };
 
-    if (targetAudioFileIds.length > 0) {
+    // Only filter by specific audio files if all=false and targetAudioFileIds are specified
+    if (!all && targetAudioFileIds.length > 0) {
       if (targetAudioFileIds.length === 1) {
         searchFilter.audioFileId = targetAudioFileIds[0];
         if (audioSourceIds.length > 0) {
@@ -515,6 +523,7 @@ Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, 
         }
       }
     }
+    // When all=true, searchFilter only has userId, so it searches across all user's files
 
     // Embed the search term
     const [termEmbedding] = await this.embeddingProvider.embedTexts([
@@ -541,7 +550,11 @@ Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, 
         
         // Security and ownership checks
         if (r.metadata.userId !== userId) return false;
-        if (targetAudioFileIds.length > 0) {
+        
+        // When all=true, accept all user's audio files; otherwise filter by targetAudioFileIds
+        if (all) {
+          return audioSourceIds.includes(r.metadata.audioSourceId);
+        } else if (targetAudioFileIds.length > 0) {
           return targetAudioFileIds.includes(r.metadata.audioFileId) ||
                  audioSourceIds.includes(r.metadata.audioSourceId);
         }
