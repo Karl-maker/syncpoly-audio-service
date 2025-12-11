@@ -18,3 +18,9 @@ variable "default_root_object" {
   type    = string
   default = "index.html"
 }
+
+variable "additional_policy_statements" {
+  type        = list(any)
+  description = "Additional policy statements to merge with CloudFront bucket policy"
+  default     = []
+}
