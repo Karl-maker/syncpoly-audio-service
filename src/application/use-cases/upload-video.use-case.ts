@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
 import { AudioFile, AudioFilePart } from "../../domain/entities/audio-file";
 import { UploadJob } from "../../domain/entities/upload-job";
+import { ProcessingJob } from "../../domain/entities/processing-job";
 import { AudioFileRepository } from "../../infrastructure/database/repositories/audio-file.repository";
 import { UploadJobRepository } from "../../infrastructure/database/repositories/upload-job.repository";
+import { ProcessingJobRepository } from "../../infrastructure/database/repositories/processing-job.repository";
 import { S3AudioStorage, S3AudioStorageConfig } from "../../infrastructure/aws/s3.audio.storage";
 import { VideoConverterService } from "../../infrastructure/video/video-converter.service";
 import { AudioSourceProvidersType } from "../../domain/enums/audio.source.provider";
@@ -25,6 +27,7 @@ export class UploadVideoUseCase {
   constructor(
     private audioFileRepository: AudioFileRepository,
     private uploadJobRepository: UploadJobRepository,
+    private processingJobRepository: ProcessingJobRepository,
     private s3Storage?: S3AudioStorage
   ) {
     this.videoConverter = new VideoConverterService();
@@ -70,6 +73,10 @@ export class UploadVideoUseCase {
     cdnUrl?: string
   ): Promise<void> {
     const jobId = uploadJob.id; // Declare outside try block so it's accessible in catch
+    // Declare variables outside try block so they're accessible in catch block
+    let temporaryProcessingJobId: string | undefined;
+    let audioFile: AudioFile | undefined;
+    
     try {
       // Update job status to uploading
       await this.uploadJobRepository.update(jobId, {
@@ -162,10 +169,50 @@ export class UploadVideoUseCase {
 
           console.log(`[UploadVideo] Chunked MP3 into ${chunks.length} parts`);
 
-          // Calculate total duration from chunks (last chunk's endTimeSec)
+          // Calculate total duration from chunks (last chunk's endTimeSec) - before S3 upload
           totalDuration = chunks.length > 0 ? chunks[chunks.length - 1].endTimeSec : undefined;
           if (totalDuration) {
-            console.log(`[UploadVideo] Total duration: ${totalDuration.toFixed(2)} seconds`);
+            console.log(`[UploadVideo] Total duration (from chunks, before S3 upload): ${totalDuration.toFixed(2)} seconds`);
+            
+            // Create temporary AudioFile and ProcessingJob now (before S3 upload)
+            if (totalDuration > 0) {
+              try {
+                audioFile = await this.audioFileRepository.create({
+                  userId,
+                  filename: file.originalname.replace(/\.[^/.]+$/, "") + ".mp3",
+                  originalFilename: file.originalname,
+                  s3Bucket: undefined, // Placeholder, will be updated
+                  s3Key: undefined, // Placeholder, will be updated
+                  parts: undefined, // Will be updated after upload
+                  partCount: chunks.length,
+                  videoSourceS3Bucket: videoS3BucketName,
+                  videoSourceS3Key: videoS3Key,
+                  cdnUrl: undefined, // Will be updated after upload
+                  audioSourceProvider,
+                  fileSize: mp3Buffer.length,
+                  duration: totalDuration,
+                  mimeType: "audio/mpeg",
+                  uploadedAt: new Date(),
+                } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
+
+                const processingJob = await this.processingJobRepository.create({
+                  audioFileId: audioFile.id,
+                  userId,
+                  status: "pending",
+                  progress: 0,
+                  processedParts: [],
+                  lastProcessedPartIndex: -1,
+                  vectorStoreType: "openai",
+                  retryCount: 0,
+                  maxRetries: 5,
+                } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
+                
+                temporaryProcessingJobId = processingJob.id;
+                console.log(`[UploadVideo] Created temporary ProcessingJob ${temporaryProcessingJobId} for audioFile ${audioFile.id} with duration ${totalDuration.toFixed(2)}s (before S3 upload)`);
+              } catch (error: any) {
+                console.error(`[UploadVideo] Failed to create temporary ProcessingJob early:`, error);
+              }
+            }
           }
 
           // Update progress to 80% when chunking is complete and upload starts
@@ -237,7 +284,7 @@ export class UploadVideoUseCase {
           console.log(`[UploadVideo] Uploaded ${parts.length} parts`);
         } else {
           // Single file upload (backward compatible)
-          // Get duration for single MP3 file using ffprobe
+          // Get duration for single MP3 file using ffprobe (before S3 upload)
           try {
             const { exec } = await import("child_process");
             const { promisify } = await import("util");
@@ -256,7 +303,47 @@ export class UploadVideoUseCase {
             
             await unlink(tempFile).catch(() => {});
             if (totalDuration) {
-              console.log(`[UploadVideo] Single MP3 file duration: ${totalDuration.toFixed(2)} seconds`);
+              console.log(`[UploadVideo] Single MP3 file duration (before S3 upload): ${totalDuration.toFixed(2)} seconds`);
+              
+              // Create temporary AudioFile and ProcessingJob now (before S3 upload)
+              if (totalDuration > 0) {
+                try {
+                  audioFile = await this.audioFileRepository.create({
+                    userId,
+                    filename: file.originalname.replace(/\.[^/.]+$/, "") + ".mp3",
+                    originalFilename: file.originalname,
+                    s3Bucket: undefined, // Placeholder, will be updated
+                    s3Key: undefined, // Placeholder, will be updated
+                    parts: undefined,
+                    partCount: undefined,
+                    videoSourceS3Bucket: videoS3BucketName,
+                    videoSourceS3Key: videoS3Key,
+                    cdnUrl: undefined, // Will be updated after upload
+                    audioSourceProvider,
+                    fileSize: mp3Buffer.length,
+                    duration: totalDuration,
+                    mimeType: "audio/mpeg",
+                    uploadedAt: new Date(),
+                  } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
+
+                  const processingJob = await this.processingJobRepository.create({
+                    audioFileId: audioFile.id,
+                    userId,
+                    status: "pending",
+                    progress: 0,
+                    processedParts: [],
+                    lastProcessedPartIndex: -1,
+                    vectorStoreType: "openai",
+                    retryCount: 0,
+                    maxRetries: 5,
+                  } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
+                  
+                  temporaryProcessingJobId = processingJob.id;
+                  console.log(`[UploadVideo] Created temporary ProcessingJob ${temporaryProcessingJobId} for audioFile ${audioFile.id} with duration ${totalDuration.toFixed(2)}s (before S3 upload)`);
+                } catch (error: any) {
+                  console.error(`[UploadVideo] Failed to create temporary ProcessingJob early:`, error);
+                }
+              }
             }
           } catch (error) {
             console.warn(`[UploadVideo] Could not determine duration for single MP3 file:`, error);
@@ -300,25 +387,57 @@ export class UploadVideoUseCase {
         console.log(`[UploadVideo] Generated CDN URL: ${generatedCdnUrl}`);
       }
 
-      // Save metadata to database
-      const now = new Date();
-      const audioFile = await this.audioFileRepository.create({
-        userId,
-        filename: file.originalname.replace(/\.[^/.]+$/, "") + ".mp3",
-        originalFilename: file.originalname,
-        s3Bucket: s3BucketName,
-        s3Key, // Backward compatibility: points to first part
-        parts, // Array of parts for chunked uploads
-        partCount: parts?.length,
-        videoSourceS3Bucket: videoS3BucketName,
-        videoSourceS3Key: videoS3Key,
-        cdnUrl: generatedCdnUrl, // CDN URL for first part or single file
-        audioSourceProvider,
-        fileSize: mp3Buffer.length,
-        duration: totalDuration,
-        mimeType: "audio/mpeg",
-        uploadedAt: now,
-      } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
+      // Update AudioFile with S3 info (if created early) or create it now
+      if (audioFile) {
+        // Update existing AudioFile with S3 info
+        await this.audioFileRepository.update(audioFile.id, {
+          s3Bucket: s3BucketName,
+          s3Key, // Backward compatibility: points to first part
+          parts, // Array of parts for chunked uploads
+          partCount: parts?.length,
+          cdnUrl: generatedCdnUrl, // CDN URL for first part or single file
+        });
+      } else {
+        // Create AudioFile now (if duration wasn't available earlier)
+        audioFile = await this.audioFileRepository.create({
+          userId,
+          filename: file.originalname.replace(/\.[^/.]+$/, "") + ".mp3",
+          originalFilename: file.originalname,
+          s3Bucket: s3BucketName,
+          s3Key, // Backward compatibility: points to first part
+          parts, // Array of parts for chunked uploads
+          partCount: parts?.length,
+          videoSourceS3Bucket: videoS3BucketName,
+          videoSourceS3Key: videoS3Key,
+          cdnUrl: generatedCdnUrl, // CDN URL for first part or single file
+          audioSourceProvider,
+          fileSize: mp3Buffer.length,
+          duration: totalDuration,
+          mimeType: "audio/mpeg",
+          uploadedAt: new Date(),
+        } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
+
+        // Create temporary ProcessingJob if duration is known
+        if (totalDuration && totalDuration > 0) {
+          try {
+            const processingJob = await this.processingJobRepository.create({
+              audioFileId: audioFile.id,
+              userId,
+              status: "pending",
+              progress: 0,
+              processedParts: [],
+              lastProcessedPartIndex: -1,
+              vectorStoreType: "openai",
+              retryCount: 0,
+              maxRetries: 5,
+            } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
+            temporaryProcessingJobId = processingJob.id;
+            console.log(`[UploadVideo] Created temporary ProcessingJob ${temporaryProcessingJobId} for audioFile ${audioFile.id} with duration ${totalDuration.toFixed(2)}s`);
+          } catch (processingJobError: any) {
+            console.error(`[UploadVideo] Failed to create temporary ProcessingJob:`, processingJobError);
+          }
+        }
+      }
 
       // Update upload job to completed and link to audio file
       await this.uploadJobRepository.update(jobId, {
@@ -330,6 +449,26 @@ export class UploadVideoUseCase {
         completedAt: new Date(),
       });
     } catch (error: any) {
+      // Remove temporary ProcessingJob if upload failed
+      if (temporaryProcessingJobId) {
+        try {
+          await this.processingJobRepository.delete(temporaryProcessingJobId);
+          console.log(`[UploadVideo] Removed temporary ProcessingJob ${temporaryProcessingJobId} due to upload failure`);
+        } catch (deleteError: any) {
+          console.error(`[UploadVideo] Failed to remove temporary ProcessingJob ${temporaryProcessingJobId}:`, deleteError);
+        }
+      }
+      
+      // Remove temporary AudioFile if it was created early
+      if (audioFile && (!audioFile.s3Bucket || !audioFile.s3Key)) {
+        try {
+          await this.audioFileRepository.delete(audioFile.id);
+          console.log(`[UploadVideo] Removed temporary AudioFile ${audioFile.id} due to upload failure`);
+        } catch (deleteError: any) {
+          console.error(`[UploadVideo] Failed to remove temporary AudioFile ${audioFile.id}:`, deleteError);
+        }
+      }
+
       console.error(`[UploadVideo] Error in upload job ${jobId}:`, error);
       await this.uploadJobRepository.update(jobId, {
         status: "failed",

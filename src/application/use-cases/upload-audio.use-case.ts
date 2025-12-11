@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
 import { AudioFile, AudioFilePart } from "../../domain/entities/audio-file";
 import { UploadJob } from "../../domain/entities/upload-job";
+import { ProcessingJob } from "../../domain/entities/processing-job";
 import { AudioFileRepository } from "../../infrastructure/database/repositories/audio-file.repository";
 import { UploadJobRepository } from "../../infrastructure/database/repositories/upload-job.repository";
+import { ProcessingJobRepository } from "../../infrastructure/database/repositories/processing-job.repository";
 import { S3AudioStorage, S3AudioStorageConfig } from "../../infrastructure/aws/s3.audio.storage";
 import { AudioSourceProvidersType } from "../../domain/enums/audio.source.provider";
 import { AudioChunkingService } from "../../infrastructure/audio/audio-chunking.service";
@@ -22,6 +24,7 @@ export class UploadAudioUseCase {
   constructor(
     private audioFileRepository: AudioFileRepository,
     private uploadJobRepository: UploadJobRepository,
+    private processingJobRepository: ProcessingJobRepository,
     private s3Storage?: S3AudioStorage
   ) {
     this.chunkingService = new AudioChunkingService();
@@ -54,6 +57,10 @@ export class UploadAudioUseCase {
     s3Bucket?: string,
     cdnUrl?: string
   ): Promise<void> {
+    // Declare variables outside try block so they're accessible in catch block
+    let temporaryProcessingJobId: string | undefined;
+    let audioFile: AudioFile | undefined;
+    
     try {
       // Update job status to uploading
       await this.uploadJobRepository.update(uploadJob.id, {
@@ -70,6 +77,78 @@ export class UploadAudioUseCase {
 
       // Check if file should be chunked
       const shouldChunk = this.chunkingService.shouldChunkFile(file.size, this.CHUNK_SIZE_THRESHOLD);
+
+      // Get duration early (before S3 upload) and create temporary ProcessingJob
+      if (shouldChunk) {
+        // For chunked files, we'll get duration after chunking but before S3 upload
+        // This will be handled below
+      } else {
+        // For single files, get duration now (before S3 upload)
+        try {
+          const { exec } = await import("child_process");
+          const { promisify } = await import("util");
+          const { writeFile, unlink } = await import("fs/promises");
+          const { join } = await import("path");
+          const { tmpdir } = await import("os");
+          const execAsync = promisify(exec);
+          
+          const tempDir = tmpdir();
+          const tempFile = join(tempDir, `${randomUUID()}-audio`);
+          await writeFile(tempFile, file.buffer);
+          
+          const probeCmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${tempFile}"`;
+          const { stdout } = await execAsync(probeCmd);
+          totalDuration = parseFloat(stdout.trim()) || undefined;
+          
+          await unlink(tempFile).catch(() => {});
+          if (totalDuration) {
+            console.log(`[UploadAudio] Single file duration (early): ${totalDuration.toFixed(2)} seconds`);
+          }
+        } catch (error) {
+          console.warn(`[UploadAudio] Could not determine duration for single file:`, error);
+        }
+      }
+
+      // Create temporary AudioFile and ProcessingJob early (before S3 upload) if duration is known
+      if (totalDuration && totalDuration > 0) {
+        try {
+          // Create AudioFile with placeholder S3 info (will be updated after upload)
+          audioFile = await this.audioFileRepository.create({
+            userId,
+            filename: file.originalname,
+            originalFilename: file.originalname,
+            s3Bucket: undefined, // Placeholder, will be updated
+            s3Key: undefined, // Placeholder, will be updated
+            parts: undefined, // Will be updated for chunked files
+            partCount: undefined,
+            cdnUrl: undefined, // Will be updated after upload
+            audioSourceProvider,
+            fileSize: file.size,
+            duration: totalDuration,
+            mimeType: file.mimetype,
+            uploadedAt: new Date(),
+          } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
+
+          // Create temporary ProcessingJob for memory tracking
+          const processingJob = await this.processingJobRepository.create({
+            audioFileId: audioFile.id,
+            userId,
+            status: "pending",
+            progress: 0,
+            processedParts: [],
+            lastProcessedPartIndex: -1,
+            vectorStoreType: "openai",
+            retryCount: 0,
+            maxRetries: 5,
+          } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
+          
+          temporaryProcessingJobId = processingJob.id;
+          console.log(`[UploadAudio] Created temporary ProcessingJob ${temporaryProcessingJobId} for audioFile ${audioFile.id} with duration ${totalDuration.toFixed(2)}s (before S3 upload)`);
+        } catch (error: any) {
+          console.error(`[UploadAudio] Failed to create temporary ProcessingJob early:`, error);
+          // Continue with upload even if ProcessingJob creation fails
+        }
+      }
 
       // Upload to S3 if storage is configured
       if (this.s3Storage && s3Bucket) {
@@ -95,10 +174,48 @@ export class UploadAudioUseCase {
 
           console.log(`[UploadAudio] Chunked into ${chunks.length} parts`);
 
-          // Calculate total duration from chunks (last chunk's endTimeSec)
+          // Calculate total duration from chunks (last chunk's endTimeSec) - before S3 upload
           totalDuration = chunks.length > 0 ? chunks[chunks.length - 1].endTimeSec : undefined;
           if (totalDuration) {
-            console.log(`[UploadAudio] Total duration: ${totalDuration.toFixed(2)} seconds`);
+            console.log(`[UploadAudio] Total duration (from chunks, before S3 upload): ${totalDuration.toFixed(2)} seconds`);
+            
+            // Create temporary AudioFile and ProcessingJob now (before S3 upload) if not already created
+            if (!audioFile && totalDuration > 0) {
+              try {
+                audioFile = await this.audioFileRepository.create({
+                  userId,
+                  filename: file.originalname,
+                  originalFilename: file.originalname,
+                  s3Bucket: undefined, // Placeholder, will be updated
+                  s3Key: undefined, // Placeholder, will be updated
+                  parts: undefined, // Will be updated after upload
+                  partCount: chunks.length,
+                  cdnUrl: undefined, // Will be updated after upload
+                  audioSourceProvider,
+                  fileSize: file.size,
+                  duration: totalDuration,
+                  mimeType: file.mimetype,
+                  uploadedAt: new Date(),
+                } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
+
+                const processingJob = await this.processingJobRepository.create({
+                  audioFileId: audioFile.id,
+                  userId,
+                  status: "pending",
+                  progress: 0,
+                  processedParts: [],
+                  lastProcessedPartIndex: -1,
+                  vectorStoreType: "openai",
+                  retryCount: 0,
+                  maxRetries: 5,
+                } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
+                
+                temporaryProcessingJobId = processingJob.id;
+                console.log(`[UploadAudio] Created temporary ProcessingJob ${temporaryProcessingJobId} for audioFile ${audioFile.id} with duration ${totalDuration.toFixed(2)}s (before S3 upload)`);
+              } catch (error: any) {
+                console.error(`[UploadAudio] Failed to create temporary ProcessingJob early:`, error);
+              }
+            }
           }
 
           // Update progress to 30% when chunking is complete and upload starts
@@ -174,31 +291,7 @@ export class UploadAudioUseCase {
           console.log(`[UploadAudio] Uploaded ${parts.length} parts`);
         } else {
           // Single file upload (backward compatible)
-          // Get duration for single file using ffprobe
-          try {
-            const { exec } = await import("child_process");
-            const { promisify } = await import("util");
-            const { writeFile, unlink } = await import("fs/promises");
-            const { join } = await import("path");
-            const { tmpdir } = await import("os");
-            const execAsync = promisify(exec);
-            
-            const tempDir = tmpdir();
-            const tempFile = join(tempDir, `${randomUUID()}-audio`);
-            await writeFile(tempFile, file.buffer);
-            
-            const probeCmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${tempFile}"`;
-            const { stdout } = await execAsync(probeCmd);
-            totalDuration = parseFloat(stdout.trim()) || undefined;
-            
-            await unlink(tempFile).catch(() => {});
-            if (totalDuration) {
-              console.log(`[UploadAudio] Single file duration: ${totalDuration.toFixed(2)} seconds`);
-            }
-          } catch (error) {
-            console.warn(`[UploadAudio] Could not determine duration for single file:`, error);
-          }
-
+          // Duration already obtained above, now upload to S3
           const { Readable } = await import("stream");
           const fileStream = Readable.from(file.buffer);
           const key = `users/${userId}/${randomUUID()}-${file.originalname}`;
@@ -238,23 +331,55 @@ export class UploadAudioUseCase {
         console.log(`[UploadAudio] Generated CDN URL: ${generatedCdnUrl}`);
       }
 
-      // Save metadata to database
-      const now = new Date();
-      const audioFile = await this.audioFileRepository.create({
-        userId,
-        filename: file.originalname,
-        originalFilename: file.originalname,
-        s3Bucket: s3BucketName,
-        s3Key, // Backward compatibility: points to first part
-        parts, // Array of parts for chunked uploads
-        partCount: parts?.length,
-        cdnUrl: generatedCdnUrl, // CDN URL for first part or single file
-        audioSourceProvider,
-        fileSize: file.size,
-        duration: totalDuration,
-        mimeType: file.mimetype,
-        uploadedAt: now,
-      } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
+      // Update AudioFile with S3 info (if created early) or create it now
+      if (audioFile) {
+        // Update existing AudioFile with S3 info
+        await this.audioFileRepository.update(audioFile.id, {
+          s3Bucket: s3BucketName,
+          s3Key, // Backward compatibility: points to first part
+          parts, // Array of parts for chunked uploads
+          partCount: parts?.length,
+          cdnUrl: generatedCdnUrl, // CDN URL for first part or single file
+        });
+      } else {
+        // Create AudioFile now (if duration wasn't available earlier)
+        audioFile = await this.audioFileRepository.create({
+          userId,
+          filename: file.originalname,
+          originalFilename: file.originalname,
+          s3Bucket: s3BucketName,
+          s3Key, // Backward compatibility: points to first part
+          parts, // Array of parts for chunked uploads
+          partCount: parts?.length,
+          cdnUrl: generatedCdnUrl, // CDN URL for first part or single file
+          audioSourceProvider,
+          fileSize: file.size,
+          duration: totalDuration,
+          mimeType: file.mimetype,
+          uploadedAt: new Date(),
+        } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
+
+        // Create temporary ProcessingJob if duration is known
+        if (totalDuration && totalDuration > 0) {
+          try {
+            const processingJob = await this.processingJobRepository.create({
+              audioFileId: audioFile.id,
+              userId,
+              status: "pending",
+              progress: 0,
+              processedParts: [],
+              lastProcessedPartIndex: -1,
+              vectorStoreType: "openai",
+              retryCount: 0,
+              maxRetries: 5,
+            } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
+            temporaryProcessingJobId = processingJob.id;
+            console.log(`[UploadAudio] Created temporary ProcessingJob ${temporaryProcessingJobId} for audioFile ${audioFile.id} with duration ${totalDuration.toFixed(2)}s`);
+          } catch (processingJobError: any) {
+            console.error(`[UploadAudio] Failed to create temporary ProcessingJob:`, processingJobError);
+          }
+        }
+      }
 
       // Update job with completion
       await this.uploadJobRepository.update(uploadJob.id, {
@@ -266,6 +391,26 @@ export class UploadAudioUseCase {
         completedAt: new Date(),
       });
     } catch (error: any) {
+      // Remove temporary ProcessingJob if upload failed
+      if (temporaryProcessingJobId) {
+        try {
+          await this.processingJobRepository.delete(temporaryProcessingJobId);
+          console.log(`[UploadAudio] Removed temporary ProcessingJob ${temporaryProcessingJobId} due to upload failure`);
+        } catch (deleteError: any) {
+          console.error(`[UploadAudio] Failed to remove temporary ProcessingJob ${temporaryProcessingJobId}:`, deleteError);
+        }
+      }
+      
+      // Remove temporary AudioFile if it was created early
+      if (audioFile && (!audioFile.s3Bucket || !audioFile.s3Key)) {
+        try {
+          await this.audioFileRepository.delete(audioFile.id);
+          console.log(`[UploadAudio] Removed temporary AudioFile ${audioFile.id} due to upload failure`);
+        } catch (deleteError: any) {
+          console.error(`[UploadAudio] Failed to remove temporary AudioFile ${audioFile.id}:`, deleteError);
+        }
+      }
+
       await this.uploadJobRepository.update(uploadJob.id, {
         status: "failed",
         error: error.message || "Unknown error",

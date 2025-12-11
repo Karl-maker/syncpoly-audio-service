@@ -139,9 +139,10 @@ export class ProcessAudioUseCase {
         return existingJob;
       }
       
-      // If job is processing or failed, try to acquire lock and resume
+      // If job is pending, processing, or failed, try to acquire lock and resume
       // This allows continuing processing after failures or interruptions
-      if (existingJob.status === "processing" || existingJob.status === "failed") {
+      // Also handles temporary jobs created during upload
+      if (existingJob.status === "pending" || existingJob.status === "processing" || existingJob.status === "failed") {
         // Refresh job state from database to get latest processedParts and lastProcessedPartIndex
         const refreshedJob = await this.processingJobRepository.findById(existingJob.id);
         if (!refreshedJob) {
@@ -167,13 +168,23 @@ export class ProcessAudioUseCase {
         const processedParts = refreshedJob.processedParts || [];
         console.log(`[ProcessAudio] Resuming job ${refreshedJob.id} from last processed part ${lastPartIndex + 1}, already processed: [${processedParts.join(", ")}]`);
         
-        // Update job status to processing if it was failed
-        if (refreshedJob.status === "failed") {
+        // Update job status and options if needed
+        const jobOptions = {
+          ...options,
+          skipTranscription: skipTranscription === true,
+          skipEmbeddings: skipEmbeddings === true,
+          skipVectorStore: skipVectorStore === true,
+        };
+        
+        // Update job status to processing if it was pending or failed
+        if (refreshedJob.status === "pending" || refreshedJob.status === "failed") {
           await this.processingJobRepository.update(refreshedJob.id, {
             status: "processing",
             error: undefined, // Clear previous error
+            vectorStoreType: vectorStoreType || refreshedJob.vectorStoreType || "mongodb",
+            options: jobOptions,
           });
-          console.log(`[ProcessAudio] Updated job ${refreshedJob.id} status from failed to processing`);
+          console.log(`[ProcessAudio] Updated job ${refreshedJob.id} status from ${refreshedJob.status} to processing`);
         }
         
         // Get audio file again to ensure we have latest data

@@ -53,6 +53,12 @@ export class CalculateUsagePeriodUseCase {
       return jobDate >= startDate && jobDate <= endDate;
     });
 
+    // Separate completed jobs from pending/processing jobs
+    const completedJobs = jobsInPeriod.filter((job) => job.status === "completed");
+    const pendingOrProcessingJobs = jobsInPeriod.filter(
+      (job) => job.status === "pending" || job.status === "processing"
+    );
+
     // Get all audio files for the user
     const audioFiles = await this.audioFileRepository.findByUserId(userId);
     const audioFileMap = new Map(audioFiles.map((file) => [file.id, file]));
@@ -68,10 +74,8 @@ export class CalculateUsagePeriodUseCase {
     let totalAICreditsUsed = 0;
     const processLog: ProcessLogEntry[] = [];
 
-    for (const job of jobsInPeriod) {
-      if (job.status !== "completed") {
-        continue; // Only count completed jobs
-      }
+    // Process completed jobs (with credits)
+    for (const job of completedJobs) {
 
       const audioFile = audioFileMap.get(job.audioFileId);
       if (!audioFile) {
@@ -132,6 +136,33 @@ export class CalculateUsagePeriodUseCase {
           status: job.status,
           processingJobId: job.id,
         });
+      }
+    }
+
+    // Include temporary memory from pending/processing jobs (exclude failed jobs)
+    // These jobs are within the date period and represent files being uploaded or processed
+    for (const job of pendingOrProcessingJobs) {
+      const audioFile = audioFileMap.get(job.audioFileId);
+      if (!audioFile) {
+        continue;
+      }
+
+      // Calculate total audio duration for temporary memory
+      // Priority: 1) Use audioFile.duration (most accurate), 2) Estimate from file size
+      let audioProcessedSeconds = 0;
+      
+      if (audioFile.duration && audioFile.duration > 0) {
+        audioProcessedSeconds = audioFile.duration;
+      } else if (audioFile.fileSize > 0) {
+        // Estimate from file size (rough estimate: 1MB ≈ 1 minute at 128kbps)
+        const bitrateBps = 128 * 1000;
+        audioProcessedSeconds = (audioFile.fileSize * 8) / bitrateBps;
+      }
+
+      if (audioProcessedSeconds > 0) {
+        // Add temporary memory to total (not to credits, as processing hasn't happened yet)
+        totalAudioProcessedSeconds += audioProcessedSeconds;
+        // Note: No credits added for temporary memory, as processing hasn't occurred yet
       }
     }
 

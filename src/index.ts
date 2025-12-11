@@ -108,16 +108,19 @@ async function main() {
     const uploadAudioUseCase = new UploadAudioUseCase(
       audioFileRepository,
       uploadJobRepository,
+      processingJobRepository,
       s3Storage
     );
     const uploadVideoUseCase = new UploadVideoUseCase(
       audioFileRepository,
       uploadJobRepository,
+      processingJobRepository,
       s3Storage
     );
     const uploadVideoFromUrlUseCase = new UploadVideoFromUrlUseCase(
       audioFileRepository,
       uploadJobRepository,
+      processingJobRepository,
       s3Storage
     );
     const processAudioUseCase = new ProcessAudioUseCase(

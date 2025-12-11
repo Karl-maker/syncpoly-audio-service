@@ -42,6 +42,7 @@ export class GetMemoryUsageUseCase {
     // Note: This is an approximation. In a real implementation, you'd query the vector store directly
     const processingJobs = await this.processingJobRepository.findByUserId(userId);
     const completedJobs = processingJobs.filter((job) => job.status === "completed");
+    const pendingOrProcessingJobs = processingJobs.filter((job) => job.status === "pending" || job.status === "processing");
     const totalVectorStoreRecords = completedJobs.length;
 
     // Estimate vector store memory (rough estimate: ~1KB per record)
@@ -113,6 +114,32 @@ export class GetMemoryUsageUseCase {
           status: job.status,
           processingJobId: job.id,
         });
+      }
+    }
+
+    // Include temporary memory from pending/processing jobs (exclude failed jobs)
+    for (const job of pendingOrProcessingJobs) {
+      const audioFile = audioFileMap.get(job.audioFileId);
+      if (!audioFile) {
+        continue;
+      }
+
+      // Calculate total audio duration for temporary memory
+      // Priority: 1) Use audioFile.duration (most accurate), 2) Estimate from file size
+      let audioProcessedSeconds = 0;
+      
+      if (audioFile.duration && audioFile.duration > 0) {
+        audioProcessedSeconds = audioFile.duration;
+      } else if (audioFile.fileSize > 0) {
+        // Estimate from file size (rough estimate: 1MB ≈ 1 minute at 128kbps)
+        const bitrateBps = 128 * 1000;
+        audioProcessedSeconds = (audioFile.fileSize * 8) / bitrateBps;
+      }
+
+      if (audioProcessedSeconds > 0) {
+        // Add temporary memory to total (not to credits, as processing hasn't happened yet)
+        totalAudioProcessedSeconds += audioProcessedSeconds;
+        // Note: No credits added for temporary memory, as processing hasn't occurred yet
       }
     }
 
