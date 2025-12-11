@@ -38,3 +38,9 @@ variable "cors_rules" {
   }))
   default = []
 }
+
+variable "bucket_policy" {
+  type        = string
+  description = "JSON bucket policy document"
+  default     = null
+}

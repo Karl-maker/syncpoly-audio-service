@@ -45,3 +45,10 @@ resource "aws_s3_bucket_cors_configuration" "cors" {
     }
   }
 }
+
+# Bucket Policy for presigned URL uploads
+resource "aws_s3_bucket_policy" "presigned_uploads" {
+  count  = var.bucket_policy != null ? 1 : 0
+  bucket = aws_s3_bucket.bucket.id
+  policy = var.bucket_policy
+}

@@ -23,7 +23,64 @@ data "terraform_remote_state" "network" {
 
 module "s3" {
   source = "../modules/aws/s3"
-  bucket_name = var.static_s3_bucket_name
+  bucket_name = "syncpoly-transcibe-static-assets"
+  
+  # Allow public access through bucket policies (needed for presigned URLs)
+  block_public_policy = false
+  block_public_acls = true
+  ignore_public_acls = true
+  restrict_public_buckets = true
+  
+  # Bucket policy for presigned URL uploads
+  bucket_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowPresignedUrlUploads"
+        Effect = "Allow"
+        Principal = "*"
+        Action   = "s3:PutObject"
+        Resource = "arn:aws:s3:::syncpoly-transcibe-static-assets/*"
+        Condition = {
+          StringEquals = {
+            "s3:x-amz-acl" = "private"
+          }
+        }
+      }
+    ]
+  })
+  
+  # CORS configuration
+  cors_rules = [
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["GET", "PUT", "POST", "HEAD"]
+      allowed_origins = ["transcribe.syncpoly.com"]
+      expose_headers  = ["ETag", "Content-Length"]
+      max_age_seconds = 3000
+    }
+  ]
+}
+
+############################
+# Private S3 bucket for YouTube cookies
+############################
+
+module "s3_youtube_cookies" {
+  source = "../modules/aws/s3"
+  bucket_name = "syncpoly-youtube-cookies"
+  
+  # Private bucket - block all public access
+  block_public_policy = true
+  block_public_acls = true
+  ignore_public_acls = true
+  restrict_public_buckets = true
+  
+  # No bucket policy needed (private bucket)
+  bucket_policy = null
+  
+  # No CORS needed (private bucket)
+  cors_rules = []
 }
 
 module "cdn" {

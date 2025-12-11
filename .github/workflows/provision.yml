@@ -20,39 +20,13 @@ on:
         required: true
       AWS_STATE_BUCKET_KEY:
         required: true
-      # OCI Provider
-      OCI_TENANCY_OCID:
+      # S3 Bucket
+      STATIC_S3_BUCKET_NAME:
         required: true
-      OCI_USER_OCID:
-        required: true
-      OCI_FINGERPRINT:
-        required: true
-      OCI_PRIVATE_KEY:
-        required: true
-      OCI_REGION:
-        required: true
-      OCI_COMPARTMENT_OCID:
-        required: true
-      # Optional Terraform variables
-      OCI_INSTANCE_SHAPE:
-        required: false
-      OCI_DOMAIN:
-        required: false
-      OCI_SUBDOMAIN:
-        required: false
     outputs:
-      public_ip:
-        description: "Public IP address of the provisioned VM"
-        value: ${{ jobs.terraform.outputs.public_ip }}
-      ssh_public_key:
-        description: "SSH public key for the VM"
-        value: ${{ jobs.terraform.outputs.ssh_public_key }}
-      ssh_private_key:
-        description: "SSH private key for the VM (sensitive)"
-        value: ${{ jobs.terraform.outputs.ssh_private_key }}
-      dns_record:
-        description: "DNS record information for GoDaddy (JSON)"
-        value: ${{ jobs.terraform.outputs.dns_record }}
+      cdn_url:
+        description: "CDN URL from CloudFront distribution"
+        value: ${{ jobs.terraform.outputs.cdn_url }}
 jobs:
   terraform:
     runs-on: ubuntu-latest
@@ -84,12 +58,6 @@ jobs:
           chmod +x ./bin/bootstrap_backend.sh
           ./bin/bootstrap_backend.sh "$BUCKET" "$TABLE" "$AWS_REGION"
 
-      - name: Create OCI private key file
-        run: |
-          mkdir -p ~/.oci
-          echo "${{ secrets.OCI_PRIVATE_KEY }}" > ~/.oci/oci_api_key.pem
-          chmod 600 ~/.oci/oci_api_key.pem
-
       - name: Terraform Init
         run: |
           terraform -chdir=./infra/prod init \
@@ -103,26 +71,8 @@ jobs:
 
       - name: Terraform Plan
         run: |
-          PLAN_ARGS="-var=tenancy_ocid=${{ secrets.OCI_TENANCY_OCID }} \
-          -var=user_ocid=${{ secrets.OCI_USER_OCID }} \
-          -var=fingerprint=${{ secrets.OCI_FINGERPRINT }} \
-          -var=private_key_path=~/.oci/oci_api_key.pem \
-          -var=region=${{ secrets.OCI_REGION }} \
-          -var=compartment_ocid=${{ secrets.OCI_COMPARTMENT_OCID }}"
-          
-          if [ -n "${{ secrets.OCI_INSTANCE_SHAPE }}" ]; then
-            PLAN_ARGS="$PLAN_ARGS -var=instance_shape=${{ secrets.OCI_INSTANCE_SHAPE }}"
-          fi
-          
-          if [ -n "${{ secrets.OCI_DOMAIN }}" ]; then
-            PLAN_ARGS="$PLAN_ARGS -var=domain=${{ secrets.OCI_DOMAIN }}"
-          fi
-          
-          if [ -n "${{ secrets.OCI_SUBDOMAIN }}" ]; then
-            PLAN_ARGS="$PLAN_ARGS -var=subdomain=${{ secrets.OCI_SUBDOMAIN }}"
-          fi
-          
-          terraform -chdir=./infra/prod plan -out=tfplan $PLAN_ARGS
+          terraform -chdir=./infra/prod plan -out=tfplan \
+            -var="static_s3_bucket_name=${{ secrets.STATIC_S3_BUCKET_NAME }}"
 
       - name: Terraform Apply
         run: terraform -chdir=./infra/prod apply -auto-approve tfplan
@@ -130,24 +80,11 @@ jobs:
       - name: Extract Terraform Outputs
         id: terraform_outputs
         run: |
-          PUBLIC_IP=$(terraform -chdir=./infra/prod output -raw public_ip)
-          SSH_PUBLIC_KEY=$(terraform -chdir=./infra/prod output -raw ssh_public_key)
-          SSH_PRIVATE_KEY=$(terraform -chdir=./infra/prod output -raw ssh_private_key)
-          DNS_RECORD=$(terraform -chdir=./infra/prod output -json dns_record_for_godaddy)
-          
-          echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
-          echo "ssh_public_key<<EOF" >> $GITHUB_OUTPUT
-          echo "$SSH_PUBLIC_KEY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          echo "ssh_private_key<<EOF" >> $GITHUB_OUTPUT
-          echo "$SSH_PRIVATE_KEY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          echo "dns_record<<EOF" >> $GITHUB_OUTPUT
-          echo "$DNS_RECORD" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          CDN_URL=$(terraform -chdir=./infra/prod output -raw cdn_url)
+          echo "cdn_url=$CDN_URL" >> $GITHUB_OUTPUT
+          echo "CDN URL: $CDN_URL"
 
     outputs:
-      public_ip: ${{ steps.terraform_outputs.outputs.public_ip }}
-      ssh_public_key: ${{ steps.terraform_outputs.outputs.ssh_public_key }}
-      ssh_private_key: ${{ steps.terraform_outputs.outputs.ssh_private_key }}
-      dns_record: ${{ steps.terraform_outputs.outputs.dns_record }}
+      cdn_url:
+        description: "CDN URL from CloudFront distribution"
+        value: ${{ steps.terraform_outputs.outputs.cdn_url }}
