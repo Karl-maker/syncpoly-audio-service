@@ -413,10 +413,11 @@ export class ChatUseCase {
 - You have access to transcriptions from ${isMultipleFiles ? `${audioFileIds.length} audio files` : audioFileId ? "a specific audio file" : `${totalAudioFiles} audio file(s)`}. Use this context to answer questions, but if information isn't available, say so politely.
 
 **Action Items & Questions:**
-- When homework, tasks, or events are mentioned: generate ONE question AND action items if needed (not multiple questions)
-- For questions: only generate true/false or multiple-choice questions (NO short answer questions)
-- Keep it simple and relevant to what was just discussed
-- Only suggest these when naturally relevant to the conversation
+- When homework, tasks, or events are mentioned: generate action items if needed (tasks/homework that need to be done)
+- For questions: ONLY generate questions when the user explicitly asks for them or when something testable is mentioned (e.g., "generate questions", "create a quiz", "test my understanding", etc.)
+- Do NOT automatically generate questions - only create them when specifically requested
+- When questions are requested: only generate true/false or multiple-choice questions (NO short answer questions)
+- Keep questions simple and relevant to what was just discussed
 
 Remember: Short messages. One step at a time. Guide understanding. Be friendly. Use memory to build on previous conversations.`;
 
