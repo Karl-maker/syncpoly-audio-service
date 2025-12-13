@@ -100,14 +100,24 @@ export class MongoDBVectorStore implements IVectorStore {
       mongoFilter.audioFileId = { $in: filter.audioFileIds };
     }
     
-    // Handle single audioSourceId (backwards compatible)
-    if (filter?.audioSourceId) {
-      mongoFilter["metadata.audioSourceId"] = filter.audioSourceId;
-    }
+    // Only filter by audioSourceId if audioFileId is NOT provided
+    // This allows searching by audioFileId alone, which works for both:
+    // - Old vectors stored with part keys (audioSourceId = bucket/key-part-0)
+    // - New vectors stored with original file keys (audioSourceId = bucket/key)
+    // When audioFileId is provided, it's sufficient to find all vectors for that file
+    const hasAudioFileIdFilter = filter?.audioFileId || (filter?.audioFileIds && Array.isArray(filter.audioFileIds) && filter.audioFileIds.length > 0);
     
-    // Handle multiple audioSourceIds
-    if (filter?.audioSourceIds && Array.isArray(filter.audioSourceIds) && filter.audioSourceIds.length > 0) {
-      mongoFilter["metadata.audioSourceId"] = { $in: filter.audioSourceIds };
+    if (!hasAudioFileIdFilter) {
+      // Only filter by audioSourceId when audioFileId is not provided
+      // Handle single audioSourceId (backwards compatible)
+      if (filter?.audioSourceId) {
+        mongoFilter["metadata.audioSourceId"] = filter.audioSourceId;
+      }
+      
+      // Handle multiple audioSourceIds
+      if (filter?.audioSourceIds && Array.isArray(filter.audioSourceIds) && filter.audioSourceIds.length > 0) {
+        mongoFilter["metadata.audioSourceId"] = { $in: filter.audioSourceIds };
+      }
     }
 
     // Fetch all matching records (for small datasets, this is fine)

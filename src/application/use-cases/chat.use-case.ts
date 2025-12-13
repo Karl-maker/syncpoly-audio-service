@@ -145,19 +145,16 @@ export class ChatUseCase {
     
     if (targetAudioFileIds.length > 0) {
       // Filter by specific audio file(s)
+      // Note: We only use audioFileId for filtering, not audioSourceId
+      // This works for both old vectors (stored with part keys) and new vectors (stored with original file keys)
       if (targetAudioFileIds.length === 1) {
-        // Single audio file: use both audioFileId and audioSourceId for backwards compatibility
+        // Single audio file: use audioFileId only (sufficient to find all vectors for that file)
         searchFilter.audioFileId = targetAudioFileIds[0];
-        if (audioSourceIds.length > 0) {
-          searchFilter.audioSourceId = audioSourceIds[0];
-        }
+        // Don't add audioSourceId - audioFileId is sufficient and works for both old and new vectors
       } else {
         // Multiple audio files: use $in operator for audioFileId
         searchFilter.audioFileIds = targetAudioFileIds;
-        // Also include audioSourceIds for filtering
-        if (audioSourceIds.length > 0) {
-          searchFilter.audioSourceIds = audioSourceIds;
-        }
+        // Don't add audioSourceIds - audioFileIds are sufficient
       }
     }
 
@@ -554,17 +551,15 @@ Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, 
     };
 
     // Only filter by specific audio files if all=false and targetAudioFileIds are specified
+    // Note: We only use audioFileId for filtering, not audioSourceId
+    // This works for both old vectors (stored with part keys) and new vectors (stored with original file keys)
     if (!all && targetAudioFileIds.length > 0) {
       if (targetAudioFileIds.length === 1) {
         searchFilter.audioFileId = targetAudioFileIds[0];
-        if (audioSourceIds.length > 0) {
-          searchFilter.audioSourceId = audioSourceIds[0];
-        }
+        // Don't add audioSourceId - audioFileId is sufficient and works for both old and new vectors
       } else {
         searchFilter.audioFileIds = targetAudioFileIds;
-        if (audioSourceIds.length > 0) {
-          searchFilter.audioSourceIds = audioSourceIds;
-        }
+        // Don't add audioSourceIds - audioFileIds are sufficient
       }
     }
     // When all=true, searchFilter only has userId, so it searches across all user's files
