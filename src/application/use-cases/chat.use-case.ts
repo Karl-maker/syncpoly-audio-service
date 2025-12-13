@@ -267,8 +267,17 @@ export class ChatUseCase {
       "test questions", "test me", "quiz me", "questions about", "questions for",
       "practice questions", "study questions", "review questions", "questions to test"
     ];
+    
+    // Check if user explicitly requested tasks
+    const taskKeywords = [
+      "extract tasks", "create tasks", "make tasks", "action items", "homework",
+      "tasks from", "tasks in", "what tasks", "what homework", "what action items",
+      "list tasks", "list homework", "list action items", "get tasks", "get homework"
+    ];
+    
     const userMessageLower = message.toLowerCase();
     const shouldExtractQuestions = questionKeywords.some(keyword => userMessageLower.includes(keyword));
+    const shouldExtractTasks = taskKeywords.some(keyword => userMessageLower.includes(keyword));
 
     // Extract structured objects (tasks and questions) from response
     // We do this before saving the message so we can include the IDs
@@ -281,7 +290,7 @@ export class ChatUseCase {
     try {
       // Use first audioFileId for structured extraction (backwards compatible)
       const firstAudioFileId = targetAudioFileIds.length > 0 ? targetAudioFileIds[0] : undefined;
-      const extracted = await this.extractAndStoreStructuredObjects(fullResponse, userId, firstAudioFileId, shouldExtractQuestions);
+      const extracted = await this.extractAndStoreStructuredObjects(fullResponse, userId, firstAudioFileId, shouldExtractQuestions, shouldExtractTasks);
       taskIds = extracted.taskIds;
       questionIds = extracted.questionIds;
       extractionTokens = extracted.tokens || 0;
@@ -323,7 +332,8 @@ export class ChatUseCase {
     responseText: string,
     userId: string,
     audioFileId?: string,
-    extractQuestions: boolean = false
+    extractQuestions: boolean = false,
+    extractTasks: boolean = false
   ): Promise<{ taskIds: string[]; questionIds: string[]; tokens?: number; promptTokens?: number; completionTokens?: number }> {
     const taskIds: string[] = [];
     const questionIds: string[] = [];
@@ -336,7 +346,8 @@ export class ChatUseCase {
         responseText,
         userId,
         audioFileId,
-        extractQuestions
+        extractQuestions,
+        extractTasks
       );
 
       extractionTokens = extracted.tokens || 0;
@@ -397,13 +408,15 @@ export class ChatUseCase {
     responseText: string,
     userId: string,
     audioFileId?: string,
-    extractQuestions: boolean = false
+    extractQuestions: boolean = false,
+    extractTasks: boolean = false
   ): Promise<{ tasks: Task[]; questions: Question[] }> {
     const extracted = await this.extractionService.extractStructuredObjects(
       responseText,
       userId,
       audioFileId,
-      extractQuestions
+      extractQuestions,
+      extractTasks
     );
     return { tasks: extracted.tasks, questions: extracted.questions };
   }

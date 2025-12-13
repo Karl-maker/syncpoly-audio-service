@@ -58,8 +58,17 @@ export class ChatController {
             "test questions", "test me", "quiz me", "questions about", "questions for",
             "practice questions", "study questions", "review questions", "questions to test"
           ];
+          
+          // Check if user explicitly requested tasks
+          const taskKeywords = [
+            "extract tasks", "create tasks", "make tasks", "action items", "homework",
+            "tasks from", "tasks in", "what tasks", "what homework", "what action items",
+            "list tasks", "list homework", "list action items", "get tasks", "get homework"
+          ];
+          
           const userMessageLower = message.toLowerCase();
           const shouldExtractQuestions = questionKeywords.some(keyword => userMessageLower.includes(keyword));
+          const shouldExtractTasks = taskKeywords.some(keyword => userMessageLower.includes(keyword));
 
           // Use first audioFileId for extraction (backwards compatible)
           const targetAudioFileId = audioFileIds && audioFileIds.length > 0 
@@ -69,7 +78,8 @@ export class ChatController {
             fullResponse,
             req.user.userId,
             targetAudioFileId,
-            shouldExtractQuestions
+            shouldExtractQuestions,
+            shouldExtractTasks
           );
           
           if (extracted.tasks.length > 0 || extracted.questions.length > 0) {
