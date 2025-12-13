@@ -413,11 +413,14 @@ export class ChatUseCase {
 - You have access to transcriptions from ${isMultipleFiles ? `${audioFileIds.length} audio files` : audioFileId ? "a specific audio file" : `${totalAudioFiles} audio file(s)`}. Use this context to answer questions, but if information isn't available, say so politely.
 
 **Action Items & Questions:**
-- When homework, tasks, or events are mentioned: generate action items if needed (tasks/homework that need to be done)
-- For questions: ONLY generate questions when the user explicitly asks for them or when something testable is mentioned (e.g., "generate questions", "create a quiz", "test my understanding", etc.)
-- Do NOT automatically generate questions - only create them when specifically requested
-- When questions are requested: only generate true/false or multiple-choice questions (NO short answer questions)
-- Keep questions simple and relevant to what was just discussed
+- When homework, tasks, or events are mentioned: generate action items if needed
+- For questions: ONLY generate questions when:
+  * The user explicitly asks for questions (e.g., "generate questions", "create quiz questions", "test my understanding")
+  * The user asks about testing or quizzing themselves on the video/audio content
+  * The conversation is specifically about creating questions related to the video/audio content
+- Do NOT automatically generate questions when discussing content - only when explicitly requested
+- When generating questions: only generate true/false or multiple-choice questions (NO short answer questions)
+- Keep questions simple and relevant to the video/audio content being discussed
 
 Remember: Short messages. One step at a time. Guide understanding. Be friendly. Use memory to build on previous conversations.`;
 
