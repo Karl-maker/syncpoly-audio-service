@@ -20,21 +20,30 @@ export class StructuredExtractionService {
 
   /**
    * Extract tasks and questions from AI response text
+   * @param responseText The AI response text to analyze
+   * @param userId The user ID
+   * @param audioFileId Optional audio file ID
+   * @param extractQuestions Whether to extract questions (only true if user explicitly requested questions)
    */
   async extractStructuredObjects(
     responseText: string,
     userId: string,
-    audioFileId?: string
+    audioFileId?: string,
+    extractQuestions: boolean = false
   ): Promise<ExtractedObjects> {
     try {
-      const extractionPrompt = `Analyze the following text and extract any tasks/action items/homework and questions that are mentioned.
+      const questionsInstruction = extractQuestions 
+        ? "2. Questions: Extract any questions that could be used for testing/learning (true-false or multiple choice only - NO short answer questions)."
+        : "2. Questions: DO NOT extract questions. Only extract questions if the user explicitly requested them (e.g., 'generate questions', 'create quiz', 'test me'). Return an empty array for questions.";
+
+      const extractionPrompt = `Analyze the following text and extract any tasks/action items/homework${extractQuestions ? " and questions" : ""} that are mentioned.
 
 Text to analyze:
 ${responseText}
 
 Extract:
 1. Tasks/Action Items/Homework: Any items that need to be done, with due dates if mentioned, descriptions, priority if inferable, and location if mentioned.
-2. Questions: Any questions that could be used for testing/learning (true-false or multiple choice only - NO short answer questions).
+${questionsInstruction}
 
 Return a JSON object with this structure:
 {
@@ -61,6 +70,8 @@ IMPORTANT: For true-false questions, you MUST:
 - Include both "True" and "False" options
 - Set isCorrect: true for the correct option and isCorrect: false for the incorrect option
 - Set correctAnswer to "true" or "false" to indicate the correct answer
+
+${!extractQuestions ? "CRITICAL: Do NOT extract questions unless explicitly requested by the user. Return an empty array for questions." : ""}
 
 If no tasks or questions are found, return empty arrays. Only extract items that are clearly tasks or questions.`;
 

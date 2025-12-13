@@ -52,6 +52,15 @@ export class ChatController {
 
         // After streaming completes, extract and send structured objects
         try {
+          // Check if user explicitly requested questions
+          const questionKeywords = [
+            "generate questions", "create questions", "make questions", "quiz questions",
+            "test questions", "test me", "quiz me", "questions about", "questions for",
+            "practice questions", "study questions", "review questions", "questions to test"
+          ];
+          const userMessageLower = message.toLowerCase();
+          const shouldExtractQuestions = questionKeywords.some(keyword => userMessageLower.includes(keyword));
+
           // Use first audioFileId for extraction (backwards compatible)
           const targetAudioFileId = audioFileIds && audioFileIds.length > 0 
             ? audioFileIds[0] 
@@ -59,7 +68,8 @@ export class ChatController {
           const extracted = await this.chatUseCase.getExtractedObjects(
             fullResponse,
             req.user.userId,
-            targetAudioFileId
+            targetAudioFileId,
+            shouldExtractQuestions
           );
           
           if (extracted.tasks.length > 0 || extracted.questions.length > 0) {

@@ -11,13 +11,21 @@ export class StoreInVectorDbStep implements IAudioProcessingStep {
       return context;
     }
 
+    // Determine the original file's S3 key for audioSourceId
+    // Priority: originalFileS3Key (from options) > audioSource.getId() (current part key)
+    // This ensures vectors are searchable by the original file key, not part keys
+    const originalFileS3Key = context.options?.originalFileS3Key;
+    const audioSourceId = originalFileS3Key 
+      ? originalFileS3Key 
+      : context.audioSource.getId();
+
     // Ensure userId and audioFileId are in metadata for proper organization
     const records: VectorRecord[] = context.embeddings.map((e) => ({
       id: e.id,
       embedding: e.embedding,
       metadata: {
         ...e.metadata,
-        audioSourceId: context.audioSource.getId(),
+        audioSourceId: audioSourceId,
         // Ensure userId and audioFileId are present (from chunk step or context options)
         userId: e.metadata.userId || context.options?.userId,
         audioFileId: e.metadata.audioFileId || context.options?.audioFileId,

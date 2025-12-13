@@ -128,10 +128,13 @@ Return the breakdown in a clear, structured format with only the sections listed
     const breakdownText = response.choices[0]?.message?.content || "";
 
     // Extract structured objects (tasks and questions) from the breakdown
+    // Breakdown generation should NOT extract questions unless explicitly requested
+    // Questions should only be generated when user explicitly asks in chat
     const extracted = await this.extractionService.extractStructuredObjects(
       breakdownText,
       userId,
-      audioFileId
+      audioFileId,
+      false // Never extract questions from breakdown generation
     );
 
     // Parse the breakdown text to extract sections

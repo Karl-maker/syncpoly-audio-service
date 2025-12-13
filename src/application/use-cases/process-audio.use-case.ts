@@ -383,6 +383,13 @@ export class ProcessAudioUseCase {
                 getReadableStream: () => subChunkStream,
               };
 
+              // Determine original file's S3 key for vector storage (use original whole file, not part)
+              const originalFileS3Key = audioFile.videoSourceS3Key 
+                ? `${audioFile.videoSourceS3Bucket || audioFile.s3Bucket}/${audioFile.videoSourceS3Key}`
+                : audioFile.s3Key 
+                  ? `${audioFile.s3Bucket}/${audioFile.s3Key}`
+                  : undefined;
+
               // Create processing context for this sub-chunk
               const subContext: AudioProcessingContext = {
                 audioSource: subChunkAudioSource,
@@ -397,6 +404,7 @@ export class ProcessAudioUseCase {
                   subChunkIndex,
                   totalParts: partCount,
                   totalSubChunks: subChunks.length,
+                  originalFileS3Key, // Store original file's S3 key for vector metadata
                 },
               };
 
@@ -430,6 +438,14 @@ export class ProcessAudioUseCase {
             // Part is small enough, process directly (one at a time)
             const partAudioSource = new S3AudioSource(audioFile.s3Bucket!, part.s3Key, s3Config);
 
+            // Determine original file's S3 key for vector storage (use original whole file, not part)
+            // Priority: videoSourceS3Key (original video) > s3Key (original whole audio file)
+            const originalFileS3Key = audioFile.videoSourceS3Key 
+              ? `${audioFile.videoSourceS3Bucket || audioFile.s3Bucket}/${audioFile.videoSourceS3Key}`
+              : audioFile.s3Key 
+                ? `${audioFile.s3Bucket}/${audioFile.s3Key}`
+                : undefined;
+
             // Create processing context for this part
             const context: AudioProcessingContext = {
               audioSource: partAudioSource,
@@ -442,6 +458,7 @@ export class ProcessAudioUseCase {
                 userId: job.userId,
                 partIndex, // Track which part we're processing
                 totalParts: partCount,
+                originalFileS3Key, // Store original file's S3 key for vector metadata
               },
             };
 
@@ -518,6 +535,13 @@ export class ProcessAudioUseCase {
                 getReadableStream: () => chunkStream,
               };
 
+              // Determine original file's S3 key for vector storage
+              const originalFileS3Key = audioFile.videoSourceS3Key 
+                ? `${audioFile.videoSourceS3Bucket || audioFile.s3Bucket}/${audioFile.videoSourceS3Key}`
+                : audioFile.s3Key 
+                  ? `${audioFile.s3Bucket}/${audioFile.s3Key}`
+                  : undefined;
+
               const chunkContext: AudioProcessingContext = {
                 audioSource: chunkAudioSource,
                 audioSourceProvider: audioFile.audioSourceProvider,
@@ -527,6 +551,7 @@ export class ProcessAudioUseCase {
                   mimeType: audioFile.mimeType || "audio/wav",
                   audioFileId: audioFile.id,
                   userId: job.userId,
+                  originalFileS3Key, // Store original file's S3 key for vector metadata
                 },
               };
 
@@ -551,6 +576,13 @@ export class ProcessAudioUseCase {
             // File is small enough, process directly
             audioSource = new S3AudioSource(audioFile.s3Bucket, audioFile.s3Key, s3Config);
 
+            // Determine original file's S3 key for vector storage
+            const originalFileS3Key = audioFile.videoSourceS3Key 
+              ? `${audioFile.videoSourceS3Bucket || audioFile.s3Bucket}/${audioFile.videoSourceS3Key}`
+              : audioFile.s3Key 
+                ? `${audioFile.s3Bucket}/${audioFile.s3Key}`
+                : undefined;
+
             // Create processing context with file metadata
             const context: AudioProcessingContext = {
               audioSource,
@@ -561,6 +593,7 @@ export class ProcessAudioUseCase {
                 mimeType: audioFile.mimeType || "audio/wav",
                 audioFileId: audioFile.id,
                 userId: job.userId,
+                originalFileS3Key, // Store original file's S3 key for vector metadata
               },
             };
             

@@ -97,9 +97,20 @@ export class ChatUseCase {
     }
     
     // Build audioSourceId format: "bucket/key" (matches what IAudioSource.getId() returns)
+    // Priority: videoSourceS3Key (original video) > s3Key (original whole audio file)
+    // This matches what we store in vector metadata (originalFileS3Key)
     const audioSourceIds = userAudioFiles
-      .filter((f) => f.s3Bucket && f.s3Key)
-      .map((f) => `${f.s3Bucket}/${f.s3Key}`);
+      .filter((f) => {
+        // Must have either videoSourceS3Key or s3Key
+        return (f.videoSourceS3Bucket && f.videoSourceS3Key) || (f.s3Bucket && f.s3Key);
+      })
+      .map((f) => {
+        // Prefer video source (original mp4) over audio (converted mp3)
+        if (f.videoSourceS3Key) {
+          return `${f.videoSourceS3Bucket || f.s3Bucket}/${f.videoSourceS3Key}`;
+        }
+        return `${f.s3Bucket}/${f.s3Key}`;
+      });
 
     if (audioSourceIds.length === 0) {
       throw new Error("No audio files found for user");
@@ -250,6 +261,15 @@ export class ChatUseCase {
     completionTokens = TokenCounterService.countCompletionTokens(fullResponse, "gpt-4o-mini");
     totalTokens = promptTokens + completionTokens;
 
+    // Check if user explicitly requested questions
+    const questionKeywords = [
+      "generate questions", "create questions", "make questions", "quiz questions",
+      "test questions", "test me", "quiz me", "questions about", "questions for",
+      "practice questions", "study questions", "review questions", "questions to test"
+    ];
+    const userMessageLower = message.toLowerCase();
+    const shouldExtractQuestions = questionKeywords.some(keyword => userMessageLower.includes(keyword));
+
     // Extract structured objects (tasks and questions) from response
     // We do this before saving the message so we can include the IDs
     let taskIds: string[] = [];
@@ -261,7 +281,7 @@ export class ChatUseCase {
     try {
       // Use first audioFileId for structured extraction (backwards compatible)
       const firstAudioFileId = targetAudioFileIds.length > 0 ? targetAudioFileIds[0] : undefined;
-      const extracted = await this.extractAndStoreStructuredObjects(fullResponse, userId, firstAudioFileId);
+      const extracted = await this.extractAndStoreStructuredObjects(fullResponse, userId, firstAudioFileId, shouldExtractQuestions);
       taskIds = extracted.taskIds;
       questionIds = extracted.questionIds;
       extractionTokens = extracted.tokens || 0;
@@ -302,7 +322,8 @@ export class ChatUseCase {
   private async extractAndStoreStructuredObjects(
     responseText: string,
     userId: string,
-    audioFileId?: string
+    audioFileId?: string,
+    extractQuestions: boolean = false
   ): Promise<{ taskIds: string[]; questionIds: string[]; tokens?: number; promptTokens?: number; completionTokens?: number }> {
     const taskIds: string[] = [];
     const questionIds: string[] = [];
@@ -314,7 +335,8 @@ export class ChatUseCase {
       const extracted = await this.extractionService.extractStructuredObjects(
         responseText,
         userId,
-        audioFileId
+        audioFileId,
+        extractQuestions
       );
 
       extractionTokens = extracted.tokens || 0;
@@ -374,13 +396,16 @@ export class ChatUseCase {
   async getExtractedObjects(
     responseText: string,
     userId: string,
-    audioFileId?: string
+    audioFileId?: string,
+    extractQuestions: boolean = false
   ): Promise<{ tasks: Task[]; questions: Question[] }> {
-    return await this.extractionService.extractStructuredObjects(
+    const extracted = await this.extractionService.extractStructuredObjects(
       responseText,
       userId,
-      audioFileId
+      audioFileId,
+      extractQuestions
     );
+    return { tasks: extracted.tasks, questions: extracted.questions };
   }
 
   private buildSystemPrompt(audioFileIds: string[] | undefined, totalAudioFiles: number, userName?: string): string {
