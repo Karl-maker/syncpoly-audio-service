@@ -451,7 +451,9 @@ export class ChatUseCase {
 - You have access to transcriptions from ${isMultipleFiles ? `${audioFileIds.length} audio files` : audioFileId ? "a specific audio file" : `${totalAudioFiles} audio file(s)`}. Use this context to answer questions, but if information isn't available, say so politely.
 
 **Action Items & Questions:**
-- When homework, tasks, or events are mentioned: generate action items if needed
+- For tasks/action items: ONLY generate tasks when:
+  * The user explicitly asks for tasks (e.g., "extract tasks", "create tasks", "action items", "homework")
+  * The user asks about tasks/homework/action items from the video/audio content
 - For questions: ONLY generate questions when:
   * The user explicitly asks for questions (e.g., "generate questions", "create quiz questions", "test my understanding")
   * The user asks about testing or quizzing themselves on the video/audio content
