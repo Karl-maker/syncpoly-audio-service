@@ -537,11 +537,10 @@ Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, 
       }
     }
 
-    const audioSourceIds = userAudioFiles
-      .filter((f) => f.s3Bucket && f.s3Key)
-      .map((f) => `${f.s3Bucket}/${f.s3Key}`);
+    // Build set of user's audio file IDs for filtering
+    const userAudioFileIds = new Set(userAudioFiles.map(f => f.id));
 
-    if (audioSourceIds.length === 0) {
+    if (userAudioFileIds.size === 0) {
       throw new Error("No audio files found for user");
     }
 
@@ -578,7 +577,7 @@ Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, 
 
     // Minimum similarity threshold for stricter matching
     // Cosine similarity ranges from -1 to 1, with typical relevant results around 0.1-0.3
-    // Using 0.12 to filter out less relevant content while still getting good matches
+    // Using 0.23 to filter out less relevant content while still getting good matches
     const MIN_SIMILARITY_THRESHOLD = 0.23;
 
     // Filter and process results with stricter similarity threshold
@@ -590,14 +589,17 @@ Respond as a tutor: Keep it short (1-2 sentences), explain ONE point at a time, 
         // Security and ownership checks
         if (r.metadata.userId !== userId) return false;
         
-        // When all=true, accept all user's audio files; otherwise filter by targetAudioFileIds
+        // When all=true, accept all user's audio files by checking audioFileId
+        // When all=false, filter by targetAudioFileIds
         if (all) {
-          return audioSourceIds.includes(r.metadata.audioSourceId);
+          // Check if the vector's audioFileId belongs to the user's audio files
+          return r.metadata.audioFileId && userAudioFileIds.has(r.metadata.audioFileId);
         } else if (targetAudioFileIds.length > 0) {
-          return targetAudioFileIds.includes(r.metadata.audioFileId) ||
-                 audioSourceIds.includes(r.metadata.audioSourceId);
+          // Filter by specific audio file IDs
+          return targetAudioFileIds.includes(r.metadata.audioFileId);
         }
-        return audioSourceIds.includes(r.metadata.audioSourceId);
+        // If no targetAudioFileIds specified but all=false, accept all user's files
+        return r.metadata.audioFileId && userAudioFileIds.has(r.metadata.audioFileId);
       })
       .map((r) => {
         const startTimeSec = r.metadata.startTimeSec || 0;
