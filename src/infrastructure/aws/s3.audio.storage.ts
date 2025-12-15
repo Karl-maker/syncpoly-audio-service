@@ -9,6 +9,33 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Readable } from "stream";
 
+/**
+ * Sanitizes metadata values to remove invalid characters for HTTP headers.
+ * AWS S3 metadata keys and values must be valid HTTP header values.
+ * HTTP headers cannot contain control characters, newlines, or certain special characters.
+ * This function ensures only safe characters are kept: alphanumeric, spaces, hyphens, underscores, periods, and commas.
+ */
+function sanitizeMetadataValue(value: string): string {
+  if (!value) return "";
+  
+  // Convert to string
+  let str = String(value);
+  
+  // Only allow: alphanumeric (a-z, A-Z, 0-9), spaces, hyphens, underscores, periods, commas
+  // Replace everything else with underscore or remove it
+  str = str
+    .replace(/[^a-zA-Z0-9\s\-_.,]/g, "_") // Replace invalid chars with underscore
+    .replace(/\s+/g, " ") // Collapse multiple spaces to single space
+    .trim();
+  
+  // Limit to AWS metadata value limit (2KB)
+  if (str.length > 2000) {
+    str = str.substring(0, 2000);
+  }
+  
+  return str;
+}
+
 // Multipart upload threshold: use multipart for files larger than 5MB
 const MULTIPART_UPLOAD_THRESHOLD = 5 * 1024 * 1024; // 5MB
 const MULTIPART_PART_SIZE = 5 * 1024 * 1024; // 5MB per part
@@ -130,12 +157,19 @@ export class S3AudioStorage {
       );
     } else {
       // Use simple upload for smaller files
+      // Sanitize metadata values to avoid invalid header characters
+      const sanitizedMetadata = options?.metadata 
+        ? Object.fromEntries(
+            Object.entries(options.metadata).map(([k, v]) => [k, sanitizeMetadataValue(v)])
+          )
+        : undefined;
+      
       const command = new PutObjectCommand({
         Bucket: bucket,
         Key: key,
         Body: buffer,
         ContentType: options?.contentType || this.defaultContentType,
-        Metadata: options?.metadata,
+        Metadata: sanitizedMetadata,
       });
 
       try {
@@ -204,11 +238,18 @@ export class S3AudioStorage {
 
     try {
       // Step 1: Initialize multipart upload
+      // Sanitize metadata values to avoid invalid header characters
+      const sanitizedMetadata = metadata 
+        ? Object.fromEntries(
+            Object.entries(metadata).map(([k, v]) => [k, sanitizeMetadataValue(v)])
+          )
+        : undefined;
+      
       const createCommand = new CreateMultipartUploadCommand({
         Bucket: bucket,
         Key: key,
         ContentType: contentType,
-        Metadata: metadata,
+        Metadata: sanitizedMetadata,
       });
 
       const createResponse = await this.s3Client.send(createCommand);
@@ -366,12 +407,19 @@ export class S3AudioStorage {
       );
     }
 
+    // Sanitize metadata values to avoid invalid header characters
+    const sanitizedMetadata = options?.metadata 
+      ? Object.fromEntries(
+          Object.entries(options.metadata).map(([k, v]) => [k, sanitizeMetadataValue(v)])
+        )
+      : undefined;
+    
     const command = new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       Body: buffer,
       ContentType: options?.contentType || this.defaultContentType,
-      Metadata: options?.metadata,
+      Metadata: sanitizedMetadata,
     });
 
     await this.s3Client.send(command);
@@ -438,11 +486,18 @@ export class S3AudioStorage {
       expiresIn?: number; // Expiration time in seconds (default: 3600 = 1 hour)
     }
   ): Promise<string> {
+    // Sanitize metadata values to avoid invalid header characters
+    const sanitizedMetadata = options?.metadata 
+      ? Object.fromEntries(
+          Object.entries(options.metadata).map(([k, v]) => [k, sanitizeMetadataValue(v)])
+        )
+      : undefined;
+    
     const command = new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       ContentType: options?.contentType || this.defaultContentType,
-      Metadata: options?.metadata,
+      Metadata: sanitizedMetadata,
     });
 
     const expiresIn = options?.expiresIn || 3600; // Default 1 hour

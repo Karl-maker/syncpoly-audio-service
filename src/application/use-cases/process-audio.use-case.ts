@@ -176,6 +176,20 @@ export class ProcessAudioUseCase {
           skipVectorStore: skipVectorStore === true,
         };
         
+        // Get audio file again to ensure we have latest data
+        const latestAudioFile = await this.audioFileRepository.findById(audioFileId);
+        if (!latestAudioFile) {
+          // Release lock before throwing
+          await this.processingJobRepository.releaseLock(refreshedJob.id);
+          throw new Error(`Audio file not found: ${audioFileId}`);
+        }
+        
+        // Ensure language is preserved from job or audio file for retry
+        const preservedLanguage = refreshedJob.lang || latestAudioFile.lang;
+        if (preservedLanguage) {
+          console.log(`[ProcessAudio] Preserving language for retry: ${preservedLanguage}`);
+        }
+        
         // Update job status to processing if it was pending or failed
         if (refreshedJob.status === "pending" || refreshedJob.status === "failed") {
           await this.processingJobRepository.update(refreshedJob.id, {
@@ -183,16 +197,16 @@ export class ProcessAudioUseCase {
             error: undefined, // Clear previous error
             vectorStoreType: vectorStoreType || refreshedJob.vectorStoreType || "mongodb",
             options: jobOptions,
+            lang: preservedLanguage || refreshedJob.lang, // Preserve language during retry
           });
           console.log(`[ProcessAudio] Updated job ${refreshedJob.id} status from ${refreshedJob.status} to processing`);
         }
         
-        // Get audio file again to ensure we have latest data
-        const latestAudioFile = await this.audioFileRepository.findById(audioFileId);
-        if (!latestAudioFile) {
-          // Release lock before throwing
-          await this.processingJobRepository.releaseLock(refreshedJob.id);
-          throw new Error(`Audio file not found: ${audioFileId}`);
+        // Update job with language if it's missing but available in audio file
+        if (preservedLanguage && !refreshedJob.lang) {
+          await this.processingJobRepository.update(refreshedJob.id, { lang: preservedLanguage });
+          refreshedJob.lang = preservedLanguage;
+          console.log(`[ProcessAudio] Updated job ${refreshedJob.id} with language from audio file for retry: ${preservedLanguage}`);
         }
         
         // Resume processing with the refreshed job (contains latest state)
@@ -214,6 +228,12 @@ export class ProcessAudioUseCase {
       skipVectorStore: skipVectorStore === true,
     };
     
+    // Get language from audio file if not provided in options
+    const language = audioFile.lang;
+    if (language) {
+      console.log(`[ProcessAudio] Using language from audio file: ${language}`);
+    }
+    
     console.log(`[ProcessAudio] Creating new job with options:`, JSON.stringify(jobOptions));
     console.log(`[ProcessAudio] Using idempotency key: ${finalIdempotencyKey} (generated from audioFileId: ${audioFileId}, userId: ${userId})`);
     
@@ -227,6 +247,7 @@ export class ProcessAudioUseCase {
       lastProcessedPartIndex: -1,
       vectorStoreType,
       options: jobOptions,
+      lang: language, // Store language from audio file
       retryCount: 0,
       maxRetries: 5, // Default max retries
     } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -262,6 +283,15 @@ export class ProcessAudioUseCase {
   ): Promise<void> {
     // Ensure lock is released even if process crashes or terminates
     try {
+      // Ensure language is set from job or audio file (for retries)
+      const language = job.lang || audioFile.lang;
+      if (language && !job.lang) {
+        // Update job with language if it's missing but available in audio file
+        await this.processingJobRepository.update(job.id, { lang: language });
+        job.lang = language;
+        console.log(`[ProcessAudio] Updated job ${job.id} with language from audio file: ${language}`);
+      }
+      
       // Check if this is a resume (has processed parts or lastProcessedPartIndex >= 0)
       const isResume = (job.processedParts && job.processedParts.length > 0) || (job.lastProcessedPartIndex !== undefined && job.lastProcessedPartIndex >= 0);
       
@@ -331,6 +361,10 @@ export class ProcessAudioUseCase {
       const startFromPartIndex = (job.lastProcessedPartIndex ?? -1) + 1;
 
       console.log(`[ProcessAudio] Starting from part ${startFromPartIndex + 1}/${partCount}, already processed: [${processedParts.join(", ")}]`);
+      const jobLanguage = job.lang || audioFile.lang;
+      if (jobLanguage) {
+        console.log(`[ProcessAudio] Using language for all chunks: ${jobLanguage}`);
+      }
 
       if (hasParts) {
         // Process parts sequentially, starting from where we left off
@@ -405,6 +439,7 @@ export class ProcessAudioUseCase {
                   totalParts: partCount,
                   totalSubChunks: subChunks.length,
                   originalFileS3Key, // Store original file's S3 key for vector metadata
+                  language: job.lang || audioFile.lang, // Use language from job or audio file
                 },
               };
 
@@ -459,6 +494,7 @@ export class ProcessAudioUseCase {
                 partIndex, // Track which part we're processing
                 totalParts: partCount,
                 originalFileS3Key, // Store original file's S3 key for vector metadata
+                language: job.lang || audioFile.lang, // Use language from job or audio file
               },
             };
 
@@ -552,6 +588,7 @@ export class ProcessAudioUseCase {
                   audioFileId: audioFile.id,
                   userId: job.userId,
                   originalFileS3Key, // Store original file's S3 key for vector metadata
+                  language: job.lang || audioFile.lang, // Use language from job or audio file
                 },
               };
 
@@ -594,6 +631,7 @@ export class ProcessAudioUseCase {
                 audioFileId: audioFile.id,
                 userId: job.userId,
                 originalFileS3Key, // Store original file's S3 key for vector metadata
+                language: job.lang || audioFile.lang, // Use language from job or audio file
               },
             };
             

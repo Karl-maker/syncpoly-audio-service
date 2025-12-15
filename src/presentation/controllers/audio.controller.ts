@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../middleware/jwt.middleware";
 import { config } from "../../infrastructure/config/app.config";
+import { validateAndNormalizeLanguage } from "../../domain/utils/language.validator";
 import { UploadAudioUseCase } from "../../application/use-cases/upload-audio.use-case";
 import { UploadVideoUseCase } from "../../application/use-cases/upload-video.use-case";
 import { UploadVideoFromUrlUseCase } from "../../application/use-cases/upload-video-from-url.use-case";
@@ -80,6 +81,17 @@ export class AudioController {
         return;
       }
 
+      // Validate language if provided
+      const lang = req.body.lang;
+      let normalizedLang: string | undefined;
+      if (lang !== undefined && lang !== null && lang !== "") {
+        normalizedLang = validateAndNormalizeLanguage(lang);
+        if (!normalizedLang) {
+          res.status(400).json({ error: "Invalid language code. Must be a valid ISO-639-1 two-letter code (e.g., 'en', 'es', 'fr')" });
+          return;
+        }
+      }
+
       // Ensure region is explicitly set as a string
       const s3Region = config.aws.region || "us-east-1";
       if (typeof s3Region !== "string") {
@@ -89,6 +101,7 @@ export class AudioController {
       const uploadJob = await this.uploadAudioUseCase.execute({
         file: req.file,
         userId: req.user.userId,
+        lang: normalizedLang,
         s3Bucket: config.aws.s3Bucket,
         cdnUrl: config.aws.cdnUrl, // Pass CDN URL if configured
         s3Config: config.aws.accessKeyId
@@ -129,6 +142,17 @@ export class AudioController {
         return;
       }
 
+      // Validate language if provided
+      const lang = req.body.lang;
+      let normalizedLang: string | undefined;
+      if (lang !== undefined && lang !== null && lang !== "") {
+        normalizedLang = validateAndNormalizeLanguage(lang);
+        if (!normalizedLang) {
+          res.status(400).json({ error: "Invalid language code. Must be a valid ISO-639-1 two-letter code (e.g., 'en', 'es', 'fr')" });
+          return;
+        }
+      }
+
       // Ensure region is explicitly set as a string
       const s3Region = config.aws.region || "us-east-1";
       if (typeof s3Region !== "string") {
@@ -138,6 +162,7 @@ export class AudioController {
       const uploadJob = await this.uploadVideoUseCase.execute({
         file: req.file,
         userId: req.user.userId,
+        lang: normalizedLang,
         s3Bucket: config.aws.s3Bucket,
         cdnUrl: config.aws.cdnUrl, // Pass CDN URL if configured
         s3Config: config.aws.accessKeyId
@@ -173,7 +198,7 @@ export class AudioController {
         return;
       }
 
-      const { url, sizeLimit } = req.body;
+      const { url, sizeLimit, lang } = req.body;
 
       if (!url || typeof url !== "string") {
         res.status(400).json({ error: "URL is required and must be a string" });
@@ -188,6 +213,16 @@ export class AudioController {
         }
       }
 
+      // Validate language if provided
+      let normalizedLang: string | undefined;
+      if (lang !== undefined && lang !== null && lang !== "") {
+        normalizedLang = validateAndNormalizeLanguage(lang);
+        if (!normalizedLang) {
+          res.status(400).json({ error: "Invalid language code. Must be a valid ISO-639-1 two-letter code (e.g., 'en', 'es', 'fr')" });
+          return;
+        }
+      }
+
       // Ensure region is explicitly set as a string
       const s3Region = config.aws.region || "us-east-1";
       if (typeof s3Region !== "string") {
@@ -198,6 +233,7 @@ export class AudioController {
         url,
         userId: req.user.userId,
         sizeLimit,
+        lang: normalizedLang,
         s3Bucket: config.aws.s3Bucket,
         cdnUrl: config.aws.cdnUrl,
         s3Config: config.aws.accessKeyId
@@ -1309,11 +1345,21 @@ export class AudioController {
         return;
       }
 
-      const { jobId } = req.body as CompleteUploadV2Request;
+      const { jobId, lang } = req.body as CompleteUploadV2Request & { lang?: string };
 
       if (!jobId || typeof jobId !== "string") {
         res.status(400).json({ error: "jobId is required and must be a string" });
         return;
+      }
+
+      // Validate language if provided
+      let normalizedLang: string | undefined;
+      if (lang !== undefined && lang !== null && lang !== "") {
+        normalizedLang = validateAndNormalizeLanguage(lang);
+        if (!normalizedLang) {
+          res.status(400).json({ error: "Invalid language code. Must be a valid ISO-639-1 two-letter code (e.g., 'en', 'es', 'fr')" });
+          return;
+        }
       }
 
       // Ensure region is explicitly set as a string
@@ -1325,6 +1371,7 @@ export class AudioController {
       const uploadJob = await this.completeUploadAudioV2UseCase.execute({
         jobId,
         userId: req.user.userId,
+        lang: normalizedLang,
         s3Bucket: config.aws.s3Bucket,
         cdnUrl: config.aws.cdnUrl,
         s3Config: config.aws.accessKeyId
@@ -1367,11 +1414,21 @@ export class AudioController {
         return;
       }
 
-      const { jobId } = req.body as CompleteUploadV2Request;
+      const { jobId, lang } = req.body as CompleteUploadV2Request & { lang?: string };
 
       if (!jobId || typeof jobId !== "string") {
         res.status(400).json({ error: "jobId is required and must be a string" });
         return;
+      }
+
+      // Validate language if provided
+      let normalizedLang: string | undefined;
+      if (lang !== undefined && lang !== null && lang !== "") {
+        normalizedLang = validateAndNormalizeLanguage(lang);
+        if (!normalizedLang) {
+          res.status(400).json({ error: "Invalid language code. Must be a valid ISO-639-1 two-letter code (e.g., 'en', 'es', 'fr')" });
+          return;
+        }
       }
 
       // Ensure region is explicitly set as a string
@@ -1383,6 +1440,7 @@ export class AudioController {
       const uploadJob = await this.completeUploadVideoV2UseCase.execute({
         jobId,
         userId: req.user.userId,
+        lang: normalizedLang,
         s3Bucket: config.aws.s3Bucket,
         cdnUrl: config.aws.cdnUrl,
         s3Config: config.aws.accessKeyId

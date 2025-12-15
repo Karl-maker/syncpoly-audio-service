@@ -24,6 +24,7 @@ export interface AudioFile {
   fileSize: number; // Total file size in bytes (sum of all parts)
   duration?: number; // Total duration in seconds (sum of all parts)
   mimeType: string;
+  lang?: string; // ISO-639-1 language code for transcription
   uploadedAt: Date;
   createdAt: Date;
   updatedAt: Date;

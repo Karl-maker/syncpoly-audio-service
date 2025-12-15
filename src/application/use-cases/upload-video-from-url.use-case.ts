@@ -16,6 +16,7 @@ export interface UploadVideoFromUrlUseCaseParams {
   url: string;
   userId: string;
   sizeLimit?: number; // Optional size limit in seconds (video duration)
+  lang?: string; // ISO-639-1 language code for transcription
   s3Config?: S3AudioStorageConfig;
   s3Bucket?: string;
   cdnUrl?: string; // Optional CDN URL base (e.g., "https://cdn.example.com")
@@ -57,7 +58,7 @@ export class UploadVideoFromUrlUseCase {
     } as Omit<UploadJob, "id" | "createdAt" | "updatedAt">);
 
     // Start download, upload and conversion asynchronously
-    this.uploadVideoFromUrlAsync(uploadJob, url, userId, validation.source, s3Bucket, params.cdnUrl, params.sizeLimit).catch(
+    this.uploadVideoFromUrlAsync(uploadJob, url, userId, validation.source, s3Bucket, params.cdnUrl, params.sizeLimit, params.lang).catch(
       async (error) => {
         console.error(`Upload job ${uploadJob.id} failed:`, error);
         await this.uploadJobRepository.update(uploadJob.id, {
@@ -78,7 +79,8 @@ export class UploadVideoFromUrlUseCase {
     source: string,
     s3Bucket?: string,
     cdnUrl?: string,
-    sizeLimit?: number
+    sizeLimit?: number,
+    lang?: string
   ): Promise<void> {
     const jobId = uploadJob.id;
     let tempDir: string | undefined;
@@ -152,6 +154,7 @@ export class UploadVideoFromUrlUseCase {
             fileSize: 0, // Will be updated after conversion
             duration: totalDuration,
             mimeType: "audio/mpeg",
+            lang,
             uploadedAt: new Date(),
           } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -163,6 +166,7 @@ export class UploadVideoFromUrlUseCase {
             processedParts: [],
             lastProcessedPartIndex: -1,
             vectorStoreType: "openai",
+            lang,
             retryCount: 0,
             maxRetries: 5,
           } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -185,7 +189,7 @@ export class UploadVideoFromUrlUseCase {
       if (this.s3Storage && s3Bucket) {
         // Use original title or UUID for video key
         const videoExtension = downloadResult.filename.split(".").pop() || "mp4";
-        const videoKey = `users/${userId}/videos/${baseFilename}.${videoExtension}`;
+        const videoKey = `users/${userId}/videos/${randomUUID()}.${videoExtension}`;
         const videoStream = this.videoDownloader.createVideoStream(downloadedFilePath);
 
         const videoResult = await this.s3Storage.storeAudio(
@@ -290,6 +294,7 @@ export class UploadVideoFromUrlUseCase {
                   fileSize: mp3Buffer.length,
                   duration: totalDuration,
                   mimeType: "audio/mpeg",
+                  lang,
                   uploadedAt: new Date(),
                 } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -301,6 +306,7 @@ export class UploadVideoFromUrlUseCase {
                   processedParts: [],
                   lastProcessedPartIndex: -1,
                   vectorStoreType: "openai",
+                  lang,
                   retryCount: 0,
                   maxRetries: 5,
                 } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -328,7 +334,7 @@ export class UploadVideoFromUrlUseCase {
           });
 
           // Upload each 10MB chunk as a separate S3 object
-          const fileBaseKey = `users/${userId}/audio/${randomUUID()}-${downloadedFilename.replace(/\.[^/.]+$/, "")}.mp3`;
+          const fileBaseKey = `users/${userId}/audio/${randomUUID()}.mp3`;
           parts = [];
           const uploadProgressPerPart = 20 / chunks.length; // 20% for uploads (80-99%)
 
@@ -385,7 +391,7 @@ export class UploadVideoFromUrlUseCase {
           }
 
           // Upload the original whole MP3 file for CDN access (not just parts)
-          const originalMp3Key = `users/${userId}/audio/${randomUUID()}-${downloadedFilename.replace(/\.[^/.]+$/, "")}.mp3`;
+          const originalMp3Key = `users/${userId}/audio/${randomUUID()}.mp3`;
           const originalMp3Stream = Readable.from(mp3Buffer);
           const originalMp3Result = await this.s3Storage.storeAudio(
             originalMp3Stream,
@@ -448,6 +454,7 @@ export class UploadVideoFromUrlUseCase {
                     fileSize: mp3Buffer.length,
                     duration: totalDuration,
                     mimeType: "audio/mpeg",
+                    lang,
                     uploadedAt: new Date(),
                   } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -459,6 +466,7 @@ export class UploadVideoFromUrlUseCase {
                     processedParts: [],
                     lastProcessedPartIndex: -1,
                     vectorStoreType: "openai",
+                    lang,
                     retryCount: 0,
                     maxRetries: 5,
                   } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -557,6 +565,7 @@ export class UploadVideoFromUrlUseCase {
           fileSize: mp3Buffer.length,
           duration: totalDuration,
           mimeType: "audio/mpeg",
+          lang,
           uploadedAt: new Date(),
         } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -571,6 +580,7 @@ export class UploadVideoFromUrlUseCase {
               processedParts: [],
               lastProcessedPartIndex: -1,
               vectorStoreType: "openai",
+              lang,
               retryCount: 0,
               maxRetries: 5,
             } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);

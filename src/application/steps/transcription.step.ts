@@ -23,9 +23,10 @@ export class TranscriptionStep implements IAudioProcessingStep {
       console.log(`[TranscriptionStep] Starting transcription for audio source: ${context.audioSource.getId()}`);
       const stream = context.audioSource.getReadableStream();
       
-      // Get filename and mimeType from options if available
+      // Get filename, mimeType, and language from options if available
       const filename = context.options?.filename || "audio.wav";
       const mimeType = context.options?.mimeType || "audio/wav";
+      const language = context.options?.language; // Language from processing job or audio file
       
       const fullTranscript = await this.transcriptionProvider.transcribeAudio(
         stream,
@@ -35,6 +36,7 @@ export class TranscriptionStep implements IAudioProcessingStep {
           diarizeSpeakers: true,
           filename,
           mimeType,
+          language, // Pass language to transcription provider
         }
       );
   

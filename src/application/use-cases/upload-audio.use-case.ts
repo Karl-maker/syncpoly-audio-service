@@ -12,6 +12,7 @@ import { AudioChunkingService } from "../../infrastructure/audio/audio-chunking.
 export interface UploadAudioUseCaseParams {
   file: Express.Multer.File;
   userId: string;
+  lang?: string; // ISO-639-1 language code for transcription
   s3Config?: S3AudioStorageConfig;
   s3Bucket?: string;
   cdnUrl?: string; // Optional CDN URL base (e.g., "https://cdn.example.com")
@@ -43,7 +44,7 @@ export class UploadAudioUseCase {
     } as Omit<UploadJob, "id" | "createdAt" | "updatedAt">);
 
     // Start upload asynchronously
-    this.uploadAudioAsync(uploadJob, file, userId, s3Bucket, params.cdnUrl).catch((error) => {
+    this.uploadAudioAsync(uploadJob, file, userId, s3Bucket, params.cdnUrl, params.lang).catch((error) => {
       console.error(`Upload job ${uploadJob.id} failed:`, error);
     });
 
@@ -55,7 +56,8 @@ export class UploadAudioUseCase {
     file: Express.Multer.File,
     userId: string,
     s3Bucket?: string,
-    cdnUrl?: string
+    cdnUrl?: string,
+    lang?: string
   ): Promise<void> {
     // Declare variables outside try block so they're accessible in catch block
     let temporaryProcessingJobId: string | undefined;
@@ -126,6 +128,7 @@ export class UploadAudioUseCase {
             fileSize: file.size,
             duration: totalDuration,
             mimeType: file.mimetype,
+            lang,
             uploadedAt: new Date(),
           } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -138,6 +141,7 @@ export class UploadAudioUseCase {
             processedParts: [],
             lastProcessedPartIndex: -1,
             vectorStoreType: "openai",
+            lang,
             retryCount: 0,
             maxRetries: 5,
           } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -195,6 +199,7 @@ export class UploadAudioUseCase {
                   fileSize: file.size,
                   duration: totalDuration,
                   mimeType: file.mimetype,
+                  lang,
                   uploadedAt: new Date(),
                 } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -206,6 +211,7 @@ export class UploadAudioUseCase {
                   processedParts: [],
                   lastProcessedPartIndex: -1,
                   vectorStoreType: "openai",
+                  lang,
                   retryCount: 0,
                   maxRetries: 5,
                 } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -225,7 +231,10 @@ export class UploadAudioUseCase {
 
           // Upload each 10MB chunk as a separate S3 object
           // Each part is stored independently in S3 for direct processing later
-          const fileBaseKey = `users/${userId}/${randomUUID()}-${file.originalname}`;
+          // Extract file extension for S3 key
+          const chunkFileExtension = file.originalname.split(".").pop() || "";
+          const chunkExtension = chunkFileExtension ? `.${chunkFileExtension}` : "";
+          const fileBaseKey = `users/${userId}/${randomUUID()}${chunkExtension}`;
           parts = [];
           const uploadProgressPerPart = 70 / chunks.length; // 70% for uploads (30-99%)
           
@@ -236,7 +245,7 @@ export class UploadAudioUseCase {
 
           for (let i = 0; i < chunks.length; i++) {
             const chunk = chunks[i];
-            // Each chunk gets its own unique S3 key: {baseKey}-part-{index}
+            // Each chunk gets its own unique S3 key: {uuid}.{ext}-part-{index}
             const partKey = `${fileBaseKey}-part-${i}`;
             const { Readable } = await import("stream");
             const chunkStream = Readable.from(chunk.buffer);
@@ -291,7 +300,9 @@ export class UploadAudioUseCase {
           }
 
           // Upload the original whole file for CDN access (not just parts)
-          const originalKey = `users/${userId}/${randomUUID()}-${file.originalname}`;
+          const originalFileExtension = file.originalname.split(".").pop() || "";
+          const originalExtension = originalFileExtension ? `.${originalFileExtension}` : "";
+          const originalKey = `users/${userId}/${randomUUID()}${originalExtension}`;
           const { Readable } = await import("stream");
           const originalFileStream = Readable.from(file.buffer);
           const originalResult = await this.s3Storage.storeAudio(
@@ -318,7 +329,9 @@ export class UploadAudioUseCase {
           // Duration already obtained above, now upload to S3
           const { Readable } = await import("stream");
           const fileStream = Readable.from(file.buffer);
-          const key = `users/${userId}/${randomUUID()}-${file.originalname}`;
+          const singleFileExtension = file.originalname.split(".").pop() || "";
+          const singleExtension = singleFileExtension ? `.${singleFileExtension}` : "";
+          const key = `users/${userId}/${randomUUID()}${singleExtension}`;
 
           // Track progress during upload
           const result = await this.s3Storage.storeAudio(
@@ -380,6 +393,7 @@ export class UploadAudioUseCase {
           fileSize: file.size,
           duration: totalDuration,
           mimeType: file.mimetype,
+          lang,
           uploadedAt: new Date(),
         } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -394,6 +408,7 @@ export class UploadAudioUseCase {
               processedParts: [],
               lastProcessedPartIndex: -1,
               vectorStoreType: "openai",
+              lang,
               retryCount: 0,
               maxRetries: 5,
             } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);

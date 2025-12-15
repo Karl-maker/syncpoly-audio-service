@@ -41,10 +41,10 @@ export class InitUploadV2UseCase {
       progress: 0,
     } as Omit<UploadJob, "id" | "createdAt" | "updatedAt">);
 
-    // Generate S3 key
+    // Generate S3 key - use only UUID + extension (no filename)
     const fileExtension = filename.split(".").pop() || "";
-    const sanitizedFilename = filename.replace(/[<>:"/\\|?*]/g, "").trim();
-    const s3Key = `users/${userId}/uploads/${randomUUID()}-${sanitizedFilename}`;
+    const extension = fileExtension ? `.${fileExtension}` : "";
+    const s3Key = `users/${userId}/uploads/${randomUUID()}${extension}`;
 
     // Generate presigned URL (expires in 1 hour)
     const expiresIn = 3600; // 1 hour

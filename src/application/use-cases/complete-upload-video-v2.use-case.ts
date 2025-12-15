@@ -14,6 +14,7 @@ import { Readable } from "stream";
 export interface CompleteUploadVideoV2UseCaseParams {
   jobId: string;
   userId: string;
+  lang?: string; // ISO-639-1 language code for transcription
   s3Config?: S3AudioStorageConfig;
   s3Bucket?: string;
   cdnUrl?: string;
@@ -35,7 +36,7 @@ export class CompleteUploadVideoV2UseCase {
   }
 
   async execute(params: CompleteUploadVideoV2UseCaseParams): Promise<UploadJob> {
-    const { jobId, userId, s3Bucket, cdnUrl } = params;
+    const { jobId, userId, s3Bucket, cdnUrl, lang } = params;
 
     if (!this.s3Storage || !s3Bucket) {
       throw new Error("S3 storage is not configured");
@@ -68,7 +69,7 @@ export class CompleteUploadVideoV2UseCase {
     });
 
     // Process the uploaded video file asynchronously (don't wait for completion)
-    this.processUploadedVideo(uploadJob, userId, s3Bucket, cdnUrl).catch((error) => {
+    this.processUploadedVideo(uploadJob, userId, s3Bucket, cdnUrl, lang).catch((error) => {
       console.error(`[CompleteUploadVideoV2] Processing job ${uploadJob.id} failed:`, error);
     });
 
@@ -80,7 +81,8 @@ export class CompleteUploadVideoV2UseCase {
     uploadJob: UploadJob,
     userId: string,
     s3Bucket: string,
-    cdnUrl?: string
+    cdnUrl?: string,
+    lang?: string
   ): Promise<void> {
     const jobId = uploadJob.id;
     // Declare variables outside try block so they're accessible in catch block
@@ -121,7 +123,9 @@ export class CompleteUploadVideoV2UseCase {
 
       // Step 1: Move original video to permanent location (10-30% progress)
       if (this.s3Storage && s3Bucket) {
-        const videoKey = `users/${userId}/videos/${randomUUID()}-${uploadJob.filename}`;
+        const videoExtension = uploadJob.filename.split(".").pop() || "";
+        const videoExt = videoExtension ? `.${videoExtension}` : "";
+        const videoKey = `users/${userId}/videos/${randomUUID()}${videoExt}`;
         const videoStreamForS3 = Readable.from(videoBuffer);
 
         const videoResult = await this.s3Storage.storeAudio(videoStreamForS3, s3Bucket, videoKey, {
@@ -214,6 +218,7 @@ export class CompleteUploadVideoV2UseCase {
                   fileSize: mp3Buffer.length,
                   duration: totalDuration,
                   mimeType: "audio/mpeg",
+                  lang,
                   uploadedAt: new Date(),
                 } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -225,6 +230,7 @@ export class CompleteUploadVideoV2UseCase {
                   processedParts: [],
                   lastProcessedPartIndex: -1,
                   vectorStoreType: "openai",
+                  lang,
                   retryCount: 0,
                   maxRetries: 5,
                 } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -243,7 +249,7 @@ export class CompleteUploadVideoV2UseCase {
             progress: 80,
           });
 
-          const fileBaseKey = `users/${userId}/audio/${randomUUID()}-${uploadJob.filename.replace(/\.[^/.]+$/, "")}.mp3`;
+          const fileBaseKey = `users/${userId}/audio/${randomUUID()}.mp3`;
           parts = [];
           const uploadProgressPerPart = 20 / chunks.length;
 
@@ -291,7 +297,7 @@ export class CompleteUploadVideoV2UseCase {
           }
 
           // Upload the original whole MP3 file for CDN access (not just parts)
-          const originalMp3Key = `users/${userId}/audio/${randomUUID()}-${uploadJob.filename.replace(/\.[^/.]+$/, "")}.mp3`;
+          const originalMp3Key = `users/${userId}/audio/${randomUUID()}.mp3`;
           const originalMp3Stream = Readable.from(mp3Buffer);
           const originalMp3Result = await this.s3Storage.storeAudio(
             originalMp3Stream,
@@ -355,6 +361,7 @@ export class CompleteUploadVideoV2UseCase {
                     fileSize: mp3Buffer.length,
                     duration: totalDuration,
                     mimeType: "audio/mpeg",
+                    lang,
                     uploadedAt: new Date(),
                   } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -366,6 +373,7 @@ export class CompleteUploadVideoV2UseCase {
                     processedParts: [],
                     lastProcessedPartIndex: -1,
                     vectorStoreType: "openai",
+                    lang,
                     retryCount: 0,
                     maxRetries: 5,
                   } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -383,7 +391,7 @@ export class CompleteUploadVideoV2UseCase {
             console.warn(`[CompleteUploadVideoV2] Could not determine duration for single MP3 file:`, error);
           }
 
-          const mp3Key = `users/${userId}/audio/${randomUUID()}-${uploadJob.filename.replace(/\.[^/.]+$/, "")}.mp3`;
+          const mp3Key = `users/${userId}/audio/${randomUUID()}.mp3`;
           const mp3Stream = Readable.from(mp3Buffer);
 
           const mp3Result = await this.s3Storage.storeAudio(mp3Stream, s3Bucket, mp3Key, {
@@ -443,6 +451,7 @@ export class CompleteUploadVideoV2UseCase {
           fileSize: mp3Buffer.length,
           duration: totalDuration,
           mimeType: "audio/mpeg",
+          lang,
           uploadedAt: new Date(),
         } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -456,6 +465,7 @@ export class CompleteUploadVideoV2UseCase {
               processedParts: [],
               lastProcessedPartIndex: -1,
               vectorStoreType: "openai",
+              lang,
               retryCount: 0,
               maxRetries: 5,
             } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);

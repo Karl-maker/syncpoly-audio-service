@@ -75,16 +75,33 @@ export class OpenAITranscriptionProvider implements ITranscriptionProvider {
       
       console.log(`[OpenAITranscriptionProvider] File object created, type: ${file.constructor.name}`);
 
-      console.log(`[OpenAITranscriptionProvider] Created file object, calling OpenAI API...`);
+      const language = options?.language || "en";
+      console.log(`[OpenAITranscriptionProvider] Created file object, calling OpenAI API with language: ${language}...`);
+
+      // Log HTTP request details
+      const requestStartTime = Date.now();
+      console.log(`[OpenAITranscriptionProvider] HTTP Request: POST /v1/audio/transcriptions`);
+      console.log(`[OpenAITranscriptionProvider] Request params:`, {
+        model: "whisper-1",
+        language: language,
+        response_format: "verbose_json",
+        timestamp_granularities: ["segment"],
+        file_size: audioBuffer.length,
+        filename: filename,
+        mimeType: detectedMimeType,
+      });
 
       // Call OpenAI transcription API with correct model
       const response = await this.client.audio.transcriptions.create({
         model: "whisper-1", // Correct model name
         file: file,
+        language: language,
         response_format: "verbose_json", // Get detailed response with timestamps
         timestamp_granularities: ["segment"], // Get segment-level timestamps
       });
 
+      const requestDuration = Date.now() - requestStartTime;
+      console.log(`[OpenAITranscriptionProvider] HTTP Response: POST /v1/audio/transcriptions - ${requestDuration}ms`);
       console.log(`[OpenAITranscriptionProvider] Transcription response received`);
 
       // OpenAI's verbose_json format returns:

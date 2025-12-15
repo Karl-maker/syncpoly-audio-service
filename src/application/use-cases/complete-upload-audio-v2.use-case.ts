@@ -12,6 +12,7 @@ import { AudioChunkingService } from "../../infrastructure/audio/audio-chunking.
 export interface CompleteUploadAudioV2UseCaseParams {
   jobId: string;
   userId: string;
+  lang?: string; // ISO-639-1 language code for transcription
   s3Config?: S3AudioStorageConfig;
   s3Bucket?: string;
   cdnUrl?: string;
@@ -31,7 +32,7 @@ export class CompleteUploadAudioV2UseCase {
   }
 
   async execute(params: CompleteUploadAudioV2UseCaseParams): Promise<UploadJob> {
-    const { jobId, userId, s3Bucket, cdnUrl } = params;
+    const { jobId, userId, s3Bucket, cdnUrl, lang } = params;
 
     if (!this.s3Storage || !s3Bucket) {
       throw new Error("S3 storage is not configured");
@@ -64,7 +65,7 @@ export class CompleteUploadAudioV2UseCase {
     });
 
     // Process the uploaded file asynchronously (don't wait for completion)
-    this.processUploadedFile(uploadJob, userId, s3Bucket, cdnUrl).catch((error) => {
+    this.processUploadedFile(uploadJob, userId, s3Bucket, cdnUrl, lang).catch((error) => {
       console.error(`[CompleteUploadAudioV2] Processing job ${uploadJob.id} failed:`, error);
     });
 
@@ -76,7 +77,8 @@ export class CompleteUploadAudioV2UseCase {
     uploadJob: UploadJob,
     userId: string,
     s3Bucket: string,
-    cdnUrl?: string
+    cdnUrl?: string,
+    lang?: string
   ): Promise<void> {
     // Declare variables outside try block so they're accessible in catch block
     let temporaryProcessingJobId: string | undefined;
@@ -164,6 +166,7 @@ export class CompleteUploadAudioV2UseCase {
                 fileSize: fileBuffer.length,
                 duration: totalDuration,
                 mimeType: fileMetadata.contentType || "audio/wav",
+                lang,
                 uploadedAt: new Date(),
               } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -175,6 +178,7 @@ export class CompleteUploadAudioV2UseCase {
                 processedParts: [],
                 lastProcessedPartIndex: -1,
                 vectorStoreType: "openai",
+                lang,
                 retryCount: 0,
                 maxRetries: 5,
               } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -190,7 +194,10 @@ export class CompleteUploadAudioV2UseCase {
         }
 
         // Move chunks to final S3 location
-        const fileBaseKey = `users/${userId}/audio/${randomUUID()}-${uploadJob.filename}`;
+        // Extract file extension for S3 key
+        const fileExtension = uploadJob.filename.split(".").pop() || "";
+        const extension = fileExtension ? `.${fileExtension}` : "";
+        const fileBaseKey = `users/${userId}/audio/${randomUUID()}${extension}`;
         parts = [];
         const uploadProgressPerPart = 70 / chunks.length;
 
@@ -284,6 +291,7 @@ export class CompleteUploadAudioV2UseCase {
                   fileSize: fileBuffer.length,
                   duration: totalDuration,
                   mimeType: fileMetadata.contentType || "audio/wav",
+                  lang,
                   uploadedAt: new Date(),
                 } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -295,6 +303,7 @@ export class CompleteUploadAudioV2UseCase {
                   processedParts: [],
                   lastProcessedPartIndex: -1,
                   vectorStoreType: "openai",
+                  lang,
                   retryCount: 0,
                   maxRetries: 5,
                 } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);
@@ -313,7 +322,9 @@ export class CompleteUploadAudioV2UseCase {
         }
 
         // Move file to final S3 location
-        const key = `users/${userId}/audio/${randomUUID()}-${uploadJob.filename}`;
+        const fileExtension = uploadJob.filename.split(".").pop() || "";
+        const extension = fileExtension ? `.${fileExtension}` : "";
+        const key = `users/${userId}/audio/${randomUUID()}${extension}`;
         const { Readable } = await import("stream");
         const fileStream = Readable.from(fileBuffer);
 
@@ -369,6 +380,7 @@ export class CompleteUploadAudioV2UseCase {
           fileSize: fileBuffer.length,
           duration: totalDuration,
           mimeType: fileMetadata.contentType || "audio/wav",
+          lang,
           uploadedAt: new Date(),
         } as Omit<AudioFile, "id" | "createdAt" | "updatedAt">);
 
@@ -382,6 +394,7 @@ export class CompleteUploadAudioV2UseCase {
               processedParts: [],
               lastProcessedPartIndex: -1,
               vectorStoreType: "openai",
+              lang,
               retryCount: 0,
               maxRetries: 5,
             } as Omit<ProcessingJob, "id" | "createdAt" | "updatedAt">);

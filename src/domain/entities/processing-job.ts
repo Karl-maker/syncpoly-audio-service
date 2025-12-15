@@ -8,6 +8,7 @@ export interface ProcessingJob {
   transcriptId?: string;
   vectorStoreType?: string; // e.g., "openai", "in-memory"
   options?: Record<string, any>; // Processing options
+  lang?: string; // ISO-639-1 language code for transcription
   error?: string;
   startedAt?: Date;
   completedAt?: Date;

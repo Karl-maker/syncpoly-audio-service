@@ -78,6 +78,12 @@ export class ResumeIncompleteJobsUseCase {
         } as Partial<ProcessingJob>);
 
         console.log(`[ResumeIncompleteJobs] Resuming job ${job.id} (retry ${retryCount}/${jobMaxRetries})`);
+        
+        // Ensure language is preserved from job or audio file
+        const preservedLanguage = job.lang || audioFile.lang;
+        if (preservedLanguage) {
+          console.log(`[ResumeIncompleteJobs] Preserving language for retry: ${preservedLanguage}`);
+        }
 
         // Resume processing by calling process-audio use case
         // This will handle lock acquisition and processing
