@@ -234,7 +234,7 @@ export class UploadAudioUseCase {
           // Extract file extension for S3 key
           const chunkFileExtension = file.originalname.split(".").pop() || "";
           const chunkExtension = chunkFileExtension ? `.${chunkFileExtension}` : "";
-          const fileBaseKey = `users/${userId}/${randomUUID()}${chunkExtension}`;
+          const fileBaseKey = `users/${userId}/audio/${randomUUID()}${chunkExtension}`;
           parts = [];
           const uploadProgressPerPart = 70 / chunks.length; // 70% for uploads (30-99%)
           
@@ -302,7 +302,7 @@ export class UploadAudioUseCase {
           // Upload the original whole file for CDN access (not just parts)
           const originalFileExtension = file.originalname.split(".").pop() || "";
           const originalExtension = originalFileExtension ? `.${originalFileExtension}` : "";
-          const originalKey = `users/${userId}/${randomUUID()}${originalExtension}`;
+          const originalKey = `users/${userId}/audio/${randomUUID()}${originalExtension}`;
           const { Readable } = await import("stream");
           const originalFileStream = Readable.from(file.buffer);
           const originalResult = await this.s3Storage.storeAudio(
@@ -331,7 +331,7 @@ export class UploadAudioUseCase {
           const fileStream = Readable.from(file.buffer);
           const singleFileExtension = file.originalname.split(".").pop() || "";
           const singleExtension = singleFileExtension ? `.${singleFileExtension}` : "";
-          const key = `users/${userId}/${randomUUID()}${singleExtension}`;
+          const key = `users/${userId}/audio/${randomUUID()}${singleExtension}`;
 
           // Track progress during upload
           const result = await this.s3Storage.storeAudio(

@@ -244,11 +244,32 @@ export class CompleteUploadAudioV2UseCase {
 
           if (i === 0) {
             s3BucketName = result.bucket;
-            // Keep original file's key, not the first part's key
-            // The original whole file is at uploadJob.s3Key
-            s3Key = uploadJob.s3Key || result.key;
           }
         }
+
+        // Upload the original whole file to /audio/ path for CDN access (not just parts)
+        const originalFileExtension = uploadJob.filename.split(".").pop() || "";
+        const originalExtension = originalFileExtension ? `.${originalFileExtension}` : "";
+        const originalKey = `users/${userId}/audio/${randomUUID()}${originalExtension}`;
+        const { Readable } = await import("stream");
+        const originalFileStream = Readable.from(fileBuffer);
+        const originalResult = await this.s3Storage!.storeAudio(
+          originalFileStream,
+          s3Bucket,
+          originalKey,
+          {
+            contentType: fileMetadata.contentType || "audio/wav",
+            metadata: {
+              userId,
+              originalFilename: uploadJob.filename,
+              type: "original",
+            },
+          }
+        );
+        
+        s3BucketName = originalResult.bucket;
+        s3Key = originalResult.key; // Use the new /audio/ path file, not the /uploads/ temp file
+        console.log(`[CompleteUploadAudioV2] Uploaded original whole file to /audio/ path: ${s3Key}`);
 
         console.log(`[CompleteUploadAudioV2] Uploaded ${parts.length} parts`);
       } else {
@@ -347,13 +368,12 @@ export class CompleteUploadAudioV2UseCase {
       }
 
       // Generate CDN URL if configured
-      // Always use the original whole file (uploadJob.s3Key) if available, not parts
+      // Use the new s3Key (which is in /audio/ path) instead of uploadJob.s3Key (which is in /uploads/)
       let generatedCdnUrl: string | undefined;
-      const keyForCdn = uploadJob.s3Key || s3Key; // Prefer original file over parts
-      if (cdnUrl && keyForCdn) {
+      if (cdnUrl && s3Key) {
         const cdnBase = cdnUrl.replace(/\/$/, "");
         // CDN URL format: https://cdn.example.com/key (no bucket name)
-        generatedCdnUrl = `${cdnBase}/${keyForCdn}`;
+        generatedCdnUrl = `${cdnBase}/${s3Key}`;
         console.log(`[CompleteUploadAudioV2] Generated CDN URL for original file: ${generatedCdnUrl}`);
       }
 
