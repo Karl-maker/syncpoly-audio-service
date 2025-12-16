@@ -11,6 +11,8 @@ export interface Customer {
   deactivatedAt?: Date;
   deactivatedReason?: string;
   updatedAt: Date;
+  userCategory: string;
+  userIntent: string;
 }
 
 

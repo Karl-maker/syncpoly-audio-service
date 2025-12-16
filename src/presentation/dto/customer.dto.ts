@@ -14,6 +14,8 @@ export interface UpdateCustomerRequest {
   customerId?: string;
   customerProvider?: 'stripe';
   customerSubscriptionId?: string;
+  userCategory?: string;
+  userIntent?: string;
 }
 
 export interface DeactivateCustomerRequest {
@@ -28,6 +30,8 @@ export interface CustomerResponse {
   customerId?: string;
   customerProvider?: 'stripe';
   customerSubscriptionId?: string;
+  userCategory: string;
+  userIntent: string;
   deactivatedAt?: Date;
   deactivatedReason?: string;
   createdAt: Date;
@@ -43,6 +47,8 @@ export function toCustomerResponse(customer: Customer): CustomerResponse {
     customerId: customer.customerId,
     customerProvider: customer.customerProvider,
     customerSubscriptionId: customer.customerSubscriptionId,
+    userCategory: customer.userCategory,
+    userIntent: customer.userIntent,
     deactivatedAt: customer.deactivatedAt,
     deactivatedReason: customer.deactivatedReason,
     createdAt: customer.createdAt,

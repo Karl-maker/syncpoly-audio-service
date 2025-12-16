@@ -84,7 +84,7 @@ export class CustomerController {
         return;
       }
 
-      const { email, name, customerId, customerProvider, customerSubscriptionId } = req.body as UpdateCustomerRequest;
+      const { email, name, customerId, customerProvider, customerSubscriptionId, userCategory, userIntent } = req.body as UpdateCustomerRequest;
 
       const customer = await this.updateCustomerUseCase.execute({
         userId: req.user.userId,
@@ -93,6 +93,8 @@ export class CustomerController {
         customerId,
         customerProvider,
         customerSubscriptionId,
+        userCategory,
+        userIntent,
       });
 
       const response: CustomerResponse = toCustomerResponse(customer);

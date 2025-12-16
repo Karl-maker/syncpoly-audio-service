@@ -8,6 +8,8 @@ export interface UpdateCustomerUseCaseParams {
   customerId?: string;
   customerProvider?: 'stripe';
   customerSubscriptionId?: string;
+  userCategory?: string;
+  userIntent?: string;
 }
 
 export class UpdateCustomerUseCase {
@@ -16,7 +18,7 @@ export class UpdateCustomerUseCase {
   ) {}
 
   async execute(params: UpdateCustomerUseCaseParams): Promise<Customer> {
-    const { userId, email, name, customerId, customerProvider, customerSubscriptionId } = params;
+    const { userId, email, name, customerId, customerProvider, customerSubscriptionId, userCategory, userIntent } = params;
 
     // Get existing customer
     const existingCustomer = await this.customerRepository.findOneByUserId(userId);
@@ -57,6 +59,16 @@ export class UpdateCustomerUseCase {
         throw new Error("Cannot update customerSubscriptionId: it already has a value");
       }
       updates.customerSubscriptionId = customerSubscriptionId;
+    }
+
+    // Update userCategory if provided
+    if (userCategory !== undefined) {
+      updates.userCategory = userCategory;
+    }
+
+    // Update userIntent if provided
+    if (userIntent !== undefined) {
+      updates.userIntent = userIntent;
     }
 
     // Update customer
